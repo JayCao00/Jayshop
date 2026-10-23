@@ -518,12 +518,17 @@ function startPolling(orderId, prodsellerId) {
 const adminSessions = new Map(); // token -> 登录时间戳
 
 function requireAdmin(req, res, next) {
-  // 方式一（优先）：X-Admin-Password 请求头（前端 admin.html 采用此方式）
+  // 方式一（优先）：X-Admin-Password 请求头（前端 admin.html 的 GET 请求采用此方式）
   const headerPwd = req.get('X-Admin-Password');
   if (typeof headerPwd === 'string' && headerPwd && headerPwd === ADMIN_PASSWORD) {
     return next();
   }
-  // 方式二：POST /api/admin/login 设置的 httpOnly cookie session
+  // 方式二：POST JSON body 中的 password 字段（前端 adminApi 的 POST 请求采用此方式）
+  const bodyPwd = req.body && req.body.password;
+  if (typeof bodyPwd === 'string' && bodyPwd && bodyPwd === ADMIN_PASSWORD) {
+    return next();
+  }
+  // 方式三：POST /api/admin/login 设置的 httpOnly cookie session
   const token = req.cookies && req.cookies[ADMIN_COOKIE];
   if (token && adminSessions.has(token)) return next();
   return res.status(401).json({ error: '未登录或登录已过期' });
