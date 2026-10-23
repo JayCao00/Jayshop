@@ -79,6 +79,7 @@
         <h3 style="margin:0 0 8px;font-size:15px">🏷️ 商品定价</h3>
         <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
           可为单个商品设置固定售价（人民币）。不填则按公式自动计价（成本 ×（1+<span id="markupLabel">0.30</span>）× 汇率）。<br>
+          ⭐/☆ = 设为/取消热门（首页"🔥热门"分类）。<br>
           🔒 = 已锁定：该价格已写入环境变量 <code>PRICE_OVERRIDES</code>，每次更新重建后自动恢复。<br>
           后台修改立即生效；想让它永久生效，点下方按钮复制配置，粘贴到 Render 环境变量 <code>PRICE_OVERRIDES</code> 并保存。
         </p>
@@ -101,7 +102,8 @@
           </div>
           <div style="flex:1;min-width:200px">
             <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
-              上传后客户付款页即展示此码。未上传时若设置了环境变量 <code>ALIPAY_QR_URL</code> 则使用该地址。
+              上传后客户付款页即展示此码（本次有效，重建后丢失）。<br>
+              <strong>永久方案：</strong>把收款码图片命名为 <code>alipay-qr.jpg</code>（或 .png）放到代码 <code>public/</code> 目录并推送，永久生效，以后再也不用上传。未上传时若设置了环境变量 <code>ALIPAY_QR_URL</code> 则使用该地址。
             </p>
             <input type="file" id="qrFile" accept="image/png,image/jpeg,image/gif,image/webp" class="file-input">
             <div style="margin-top:10px">
@@ -500,6 +502,7 @@
           '<input class="price-input" type="number" min="0" step="0.01" placeholder="¥' + p.formulaPrice + '"' +
             (custom ? ' value="' + p.overridePrice + '"' : '') +
             ' style="width:110px;padding:8px 10px;border:1px solid var(--line,#ddd);border-radius:8px;font-size:14px">' +
+          '<button class="btn ghost small price-featured" title="' + (p.featured ? '取消热门' : '设为热门') + '" style="width:auto;padding:8px 10px">' + (p.featured ? '⭐' : '☆') + '</button>' +
           '<button class="btn small price-save" style="width:auto;padding:8px 14px">保存</button>' +
           (custom ? '<button class="btn ghost small price-reset" style="width:auto;padding:8px 14px">恢复公式价</button>' : '') +
         '</div>';
@@ -529,11 +532,30 @@
 
     // 定价列表事件委托：保存 / 恢复公式价
     document.getElementById('priceList').addEventListener('click', async function (e) {
-      var btn = e.target.closest('.price-save, .price-reset');
+      var btn = e.target.closest('.price-save, .price-reset, .price-featured');
       if (!btn) return;
       var row = btn.closest('.price-row');
       if (!row) return;
       var id = row.getAttribute('data-id');
+
+      // ⭐ 热门开关：加入/移出首页"🔥热门"分类
+      if (btn.classList.contains('price-featured')) {
+        btn.disabled = true;
+        var ids = priceProducts.filter(function (p) { return p.featured; }).map(function (p) { return p.id; });
+        var idx = ids.indexOf(id);
+        var willFeature = idx < 0;
+        if (willFeature) ids.push(id); else ids.splice(idx, 1);
+        var rf = await Jay.adminApi('/api/admin/settings', pwd, { method: 'POST', body: { featuredIds: ids } });
+        btn.disabled = false;
+        if (!rf.ok) {
+          Jay.toast('保存失败：' + ((rf.data && rf.data.error) || rf.status), true);
+          return;
+        }
+        Jay.toast(willFeature ? '已设为热门 ⭐，首页"🔥热门"可见' : '已取消热门');
+        loadPrices();
+        return;
+      }
+
       var input = row.querySelector('.price-input');
       var isReset = btn.classList.contains('price-reset');
       var price = isReset ? null : (input ? input.value.trim() : '');

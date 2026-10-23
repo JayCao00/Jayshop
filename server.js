@@ -57,19 +57,42 @@ const CONTACT_QQ = (process.env.CONTACT_QQ || '').trim();
 const CONTACT_TELEGRAM = (process.env.CONTACT_TELEGRAM || '').trim().replace(/^@/, '');
 // 店铺公告：前台顶部横幅展示；优先用后台设置的值，未设置过则用环境变量 ANNOUNCEMENT
 const ANNOUNCEMENT_ENV = (process.env.ANNOUNCEMENT || '').trim().slice(0, 200);
-// 热门商品（首页"🔥热门"分类）：逗号分隔的商品 id。默认含 Gemini Pro、
-// Duolingo、Apple TV、Muse AI 四款，店主可在 Render 环境变量 FEATURED_IDS
-// 中覆盖为自己的 id 列表（逗号分隔）。
-const FEATURED_IDS = new Set(
-  (process.env.FEATURED_IDS ||
-    '6a31035939dc014325da2c66,6aa5bafb77c587d75cbe2a8e,6abeace70dbb401865ffb2d2,6ac65a53d07e0053469f477d')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-);
+// 热门商品（首页"🔥热门"分类）：优先用后台设置的值，未设置过则用环境变量 FEATURED_IDS，
+// 都没有则用默认 4 款（Gemini Pro、Duolingo、Apple TV、Muse AI）。
+const FEATURED_IDS_DEFAULT =
+  '6a31035939dc014325da2c66,6aa5bafb77c587d75cbe2a8e,6abeace70dbb401865ffb2d2,6ac65a53d07e0053469f477d';
+function parseFeaturedIds(raw) {
+  const set = new Set();
+  try {
+    const arr = Array.isArray(raw) ? raw : String(raw || '').split(',');
+    for (const s of arr) {
+      const t = String(s).trim();
+      if (t) set.add(t);
+    }
+  } catch {
+    /* 忽略 */
+  }
+  return set;
+}
+function getFeaturedIds() {
+  try {
+    if (typeof stmts !== 'undefined' && stmts.getSetting) {
+      const row = stmts.getSetting.get('featured_ids');
+      if (row && row.value !== undefined && row.value !== null) {
+        const arr = JSON.parse(String(row.value));
+        // 后台设置过（即使是空数组）就以它为准；空数组 = 取消全部热门
+        if (Array.isArray(arr)) return parseFeaturedIds(arr);
+      }
+    }
+  } catch {
+    /* 忽略，转用环境变量 */
+  }
+  const env = (process.env.FEATURED_IDS || '').trim();
+  return parseFeaturedIds(env || FEATURED_IDS_DEFAULT);
+}
 /** 标记热门商品（首页"热门"分类用；同时保留其关键词分类） */
 function applyFeatured(pub) {
-  if (FEATURED_IDS.has(String(pub.id))) pub.featured = true;
+  if (getFeaturedIds().has(String(pub.id))) pub.featured = true;
   return pub;
 }
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
@@ -324,6 +347,16 @@ function findQrFile() {
   try {
     const f = fs.readdirSync(DATA_DIR).find((n) => /^alipay_qr\.(png|jpg|gif|webp)$/.test(n));
     return f ? path.join(DATA_DIR, f) : null;
+  } catch {
+    return null;
+  }
+}
+// 仓库内置收款码：public/alipay-qr.{png,jpg,jpeg,gif,webp}，随代码部署，永久有效，无需重复上传
+function findBundledQr() {
+  try {
+    const dir = path.join(__dirname, 'public');
+    const f = fs.readdirSync(dir).find((n) => /^alipay-qr\.(png|jpg|jpeg|gif|webp)$/i.test(n));
+    return f ? path.join(dir, f) : null;
   } catch {
     return null;
   }
@@ -602,6 +635,9 @@ app.get('/api/qr', (req, res) => {
   const file = findQrFile();
   if (file) return res.sendFile(file);
   if (ALIPAY_QR_URL) return res.redirect(302, ALIPAY_QR_URL);
+  // 仓库内置收款码（public/alipay-qr.*）：永久有效
+  const bundled = findBundledQr();
+  if (bundled) return res.sendFile(bundled);
   return res.status(404).json({ error: '店主尚未设置支付宝收款码，请联系店主' });
 });
 
@@ -813,6 +849,7 @@ app.get('/api/admin/products', requireAdmin, async (req, res) => {
         id: pub.id,
         name: pub.name,
         inStock: pub.inStock,
+        featured: Boolean(pub.featured), // 是否热门（首页🔥分类）
         costUsdt: Number.isFinite(cost) ? Math.round(cost * 100) / 100 : null,
         formulaPrice: pub.price,
         overridePrice: override !== undefined ? override : null,
@@ -852,22 +889,32 @@ app.post('/api/admin/products/:id/price', requireAdmin, async (req, res) => {
   res.json({ ok: true, productId: pid, price: fixed });
 });
 
-// 通用设置查询（目前：币安 UID、店铺公告）
+// 通用设置查询（目前：币安 UID、店铺公告、热门商品）
 app.get('/api/admin/settings', requireAdmin, (req, res) => {
   let binanceUid = '';
   let announcement = '';
+  let featuredIds = [];
   try {
     const r1 = stmts.getSetting.get('binance_uid');
     if (r1 && r1.value) binanceUid = String(r1.value);
     const r2 = stmts.getSetting.get('announcement');
     if (r2 && r2.value) announcement = String(r2.value);
+    const r3 = stmts.getSetting.get('featured_ids');
+    if (r3 && r3.value) {
+      const arr = JSON.parse(String(r3.value));
+      if (Array.isArray(arr)) featuredIds = arr.filter((s) => typeof s === 'string');
+    }
   } catch {
     /* 忽略 */
   }
-  res.json({ binanceUid, binanceUidEnv: BINANCE_UID || '', announcement, announcementEnv: ANNOUNCEMENT_ENV });
+  res.json({
+    binanceUid, binanceUidEnv: BINANCE_UID || '',
+    announcement, announcementEnv: ANNOUNCEMENT_ENV,
+    featuredIds,
+  });
 });
 
-// 通用设置保存：币安 UID、店铺公告（空字符串 = 清除，恢复用环境变量的值）
+// 通用设置保存：币安 UID、店铺公告、热门商品 id 列表（空字符串/空数组 = 清除，恢复用环境变量的值）
 app.post('/api/admin/settings', requireAdmin, (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const out = {};
@@ -883,6 +930,17 @@ app.post('/api/admin/settings', requireAdmin, (req, res) => {
     const ann = typeof body.announcement === 'string' ? body.announcement.trim().slice(0, 200) : '';
     stmts.setSetting.run('announcement', ann, nowIso());
     out.announcement = ann;
+  }
+  if (body.featuredIds !== undefined) {
+    if (!Array.isArray(body.featuredIds)) {
+      return res.status(400).json({ error: 'featuredIds 应为数组' });
+    }
+    const ids = body.featuredIds
+      .filter((s) => typeof s === 'string' && s.trim())
+      .map((s) => s.trim().slice(0, 100))
+      .slice(0, 50);
+    stmts.setSetting.run('featured_ids', JSON.stringify(ids), nowIso());
+    out.featuredIds = ids;
   }
   res.json(Object.assign({ ok: true }, out));
 });
