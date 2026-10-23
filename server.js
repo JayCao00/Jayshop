@@ -64,7 +64,19 @@ if (DEMO) {
 // ---------------- 应用 ----------------
 const app = express();
 app.set('trust proxy', 1); // Render / 反向代理后取真实 IP 做限流
-app.use(helmet());
+// helmet 默认 CSP 会拦截页面内的 inline <script>（本站所有页面逻辑都写在
+// 行内 script 里）以及外部商品图片，这里放开这两项，其余保持默认收紧。
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      'script-src': ["'self'", "'unsafe-inline'"],
+      'script-src-attr': ["'unsafe-inline'"],
+      'img-src': ["'self'", 'data:', 'https:'],
+    },
+  },
+}));
+
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 
