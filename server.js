@@ -919,6 +919,33 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
   });
 });
 
+// 切换单个商品的热门状态（原子操作：后端基于数据库当前值切换，避免前端并发覆盖）
+app.post('/api/admin/settings/featured/:id/toggle', requireAdmin, (req, res) => {
+  const pid = String(req.params.id || '').trim().slice(0, 100);
+  if (!pid) return res.status(400).json({ error: '缺少商品 id' });
+  const ids = new Set();
+  try {
+    const row = stmts.getSetting.get('featured_ids');
+    if (row && row.value !== undefined && row.value !== null) {
+      const arr = JSON.parse(String(row.value));
+      if (Array.isArray(arr)) {
+        arr.forEach((s) => { if (typeof s === 'string' && s.trim()) ids.add(s.trim()); });
+      }
+    } else {
+      // 数据库无记录时，从当前生效的热门列表（环境变量/默认）开始
+      getFeaturedIds().forEach((s) => ids.add(s));
+    }
+  } catch {
+    /* 忽略 */
+  }
+  const willFeature = !ids.has(pid);
+  if (willFeature) ids.add(pid);
+  else ids.delete(pid);
+  const arr = [...ids]; // 热门数量无上限
+  stmts.setSetting.run('featured_ids', JSON.stringify(arr), nowIso());
+  res.json({ ok: true, featured: willFeature, featuredIds: arr });
+});
+
 // 通用设置保存：币安 UID、店铺公告、热门商品 id 列表（空字符串/空数组 = 清除，恢复用环境变量的值）
 app.post('/api/admin/settings', requireAdmin, (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -942,8 +969,7 @@ app.post('/api/admin/settings', requireAdmin, (req, res) => {
     }
     const ids = body.featuredIds
       .filter((s) => typeof s === 'string' && s.trim())
-      .map((s) => s.trim().slice(0, 100))
-      .slice(0, 50);
+      .map((s) => s.trim().slice(0, 100)); // 热门数量无上限
     stmts.setSetting.run('featured_ids', JSON.stringify(ids), nowIso());
     out.featuredIds = ids;
   }

@@ -555,20 +555,17 @@
       if (!row) return;
       var id = row.getAttribute('data-id');
 
-      // ⭐ 热门开关：加入/移出首页"🔥热门"分类
+      // ⭐ 热门开关：后端原子切换（避免连续点击时的并发覆盖）
       if (btn.classList.contains('price-featured')) {
         btn.disabled = true;
-        var ids = priceProducts.filter(function (p) { return p.featured; }).map(function (p) { return p.id; });
-        var idx = ids.indexOf(id);
-        var willFeature = idx < 0;
-        if (willFeature) ids.push(id); else ids.splice(idx, 1);
-        var rf = await Jay.adminApi('/api/admin/settings', pwd, { method: 'POST', body: { featuredIds: ids } });
+        var rf = await Jay.adminApi('/api/admin/settings/featured/' + encodeURIComponent(id) + '/toggle', pwd, { method: 'POST' });
         btn.disabled = false;
         if (!rf.ok) {
           Jay.toast('保存失败：' + ((rf.data && rf.data.error) || rf.status), true);
           return;
         }
-        Jay.toast(willFeature ? '已设为热门 ⭐，首页"🔥热门"可见' : '已取消热门');
+        var isNow = rf.data && rf.data.featured;
+        Jay.toast(isNow ? '已设为热门 ⭐，首页"🔥热门"可见' : '已取消热门');
         loadPrices();
         return;
       }
