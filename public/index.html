@@ -28,6 +28,8 @@
   </div>
 
   <main class="container" id="app">
+    <!-- 分类标签 -->
+    <div id="tabs" class="tabs" style="display:none" aria-label="商品分类"></div>
     <!-- 骨架屏（加载中） -->
     <div id="skeleton" class="skeleton-grid" aria-hidden="true">
       <div class="skel"></div><div class="skel"></div>
@@ -52,6 +54,40 @@
     var grid = document.getElementById('grid');
     var state = document.getElementById('state');
     var banner = document.getElementById('demoBanner');
+    var tabsEl = document.getElementById('tabs');
+
+    // 分类标签（key 与后端 getCategory 一致；featured 为热门，由后端标记）
+    var CATS = {
+      featured: '🔥热门', ai: '🤖AI工具', media: '🎬影视音乐', office: '🛠️办公设计',
+      edu: '🎓学习教育', network: '🌐网络工具', account: '📧账号邮箱', other: '📦其他'
+    };
+    var TAB_ORDER = ['all', 'featured', 'ai', 'media', 'office', 'edu', 'network', 'account', 'other'];
+    var allProducts = [];
+    var curTab = 'all';
+
+    function matchTab(p) {
+      if (curTab === 'all') return true;
+      if (curTab === 'featured') return !!p.featured;
+      return p.category === curTab;
+    }
+
+    function renderTabs() {
+      var counts = { all: allProducts.length, featured: 0 };
+      allProducts.forEach(function (p) {
+        if (p.featured) counts.featured++;
+        counts[p.category] = (counts[p.category] || 0) + 1;
+      });
+      var html = '';
+      TAB_ORDER.forEach(function (key) {
+        var c = counts[key] || 0;
+        if (key !== 'all' && c === 0) return;
+        var label = key === 'all' ? '全部' : (CATS[key] || key);
+        html += '<button class="tab' + (curTab === key ? ' active' : '') + '" data-tab="' + key + '">' +
+          label + ' ' + c + '</button>';
+      });
+      tabsEl.innerHTML = html;
+      tabsEl.style.display = 'flex';
+    }
 
     function showState(html) {
       skeleton.style.display = 'none';
@@ -60,11 +96,19 @@
       state.innerHTML = html;
     }
 
-    function render(products) {
+    function render() {
       skeleton.style.display = 'none';
       state.style.display = 'none';
       grid.style.display = 'grid';
-      grid.innerHTML = products.map(function (p) {
+      var list = allProducts.filter(matchTab);
+      if (!list.length) {
+        grid.style.display = 'none';
+        showState(Jay.emptyStateHTML('该分类暂无商品', '换个分类看看～'));
+        // 空态时保留标签页可见，方便切换
+        tabsEl.style.display = 'flex';
+        return;
+      }
+      grid.innerHTML = list.map(function (p) {
         var inStock = p.inStock !== false;
         var stockHtml = inStock
           ? '<span class="stock ok"><span class="dot"></span>有货</span>'
@@ -97,8 +141,18 @@
         showState(Jay.emptyStateHTML());
         return;
       }
-      render(products);
+      allProducts = products;
+      renderTabs();
+      render();
     }
+
+    tabsEl.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-tab]');
+      if (!b) return;
+      curTab = b.getAttribute('data-tab');
+      renderTabs();
+      render();
+    });
 
     load();
   })();

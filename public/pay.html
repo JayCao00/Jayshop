@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
-  <title>Jayshop · 支付宝付款</title>
+  <title>Jayshop · 付款</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,7 +15,7 @@
         <div class="logo">J</div>
         <div>
           <div class="brand-name">Jayshop</div>
-          <div class="brand-sub">支付宝付款</div>
+          <div class="brand-sub" id="brandSub">付款</div>
         </div>
       </a>
     </div>
@@ -35,11 +35,13 @@
       <div class="card" style="text-align:center;padding:28px 20px">
         <div style="font-size:13px;color:var(--text-2)">应付金额</div>
         <div id="pAmount" style="font-size:40px;font-weight:800;letter-spacing:-0.02em;margin:6px 0 4px"></div>
+        <div id="pAmountUsdt" style="display:none;font-size:15px;color:var(--text-2)">≈ <span id="pUsdtVal"></span> USDT（按实时汇率折算）</div>
         <div id="pProduct" style="font-size:14px;color:var(--text-2)"></div>
         <div class="order-no" id="pNo" style="margin-top:10px"></div>
       </div>
 
-      <div class="card" style="text-align:center">
+      <!-- 支付宝：扫码付款 -->
+      <div class="card" id="alipaySection" style="text-align:center;display:none">
         <h3 style="margin:0 0 4px;font-size:16px">扫码付款</h3>
         <p style="margin:0 0 16px;font-size:13px;color:var(--text-2)">打开支付宝「扫一扫」，按上方金额付款</p>
         <div class="qr-box">
@@ -50,10 +52,32 @@
         </div>
       </div>
 
+      <!-- USDT：币安内部转账 -->
+      <div class="card" id="usdtSection" style="text-align:center;display:none">
+        <h3 style="margin:0 0 4px;font-size:16px">🟡 币安内部转账 <span style="font-size:12px;font-weight:400;color:var(--text-2)">免手续费</span></h3>
+        <p style="margin:0 0 16px;font-size:13px;color:var(--text-2)">只收币安 <strong>UID 内部转账</strong>，不要走链上转账</p>
+        <div style="background:var(--bg-2,#f6f6f8);border-radius:12px;padding:16px;margin-bottom:12px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:6px">店主币安 UID（点击复制）</div>
+          <button id="uidCopy" type="button" style="font-size:28px;font-weight:800;letter-spacing:0.04em;border:none;background:none;cursor:pointer;color:var(--text-1)">
+            <span id="uidText">--</span> 📋
+          </button>
+          <div style="font-size:13px;margin-top:10px">转账数量：<strong id="usdtQty" style="font-size:18px">--</strong> USDT</div>
+        </div>
+        <ol style="text-align:left;font-size:13px;color:var(--text-2);margin:0;padding-left:20px;line-height:1.9">
+          <li>打开币安 App → 资产 → 转账（或 现货 → 提现 → 内部转账）</li>
+          <li>选择「通过 UID 转账」/「内部转账」</li>
+          <li>输入上方 UID，数量填 <strong id="usdtQty2">--</strong> USDT，确认转账</li>
+          <li>转完回到本页，点下方「我已付款」按钮</li>
+        </ol>
+        <div id="uidMissing" style="display:none;padding:24px 12px;color:var(--text-2);font-size:14px">
+          店主尚未设置币安 UID<br>请联系店主获取付款方式
+        </div>
+      </div>
+
       <div class="card">
         <div class="field">
-          <label>支付宝昵称 / 备注 <span style="color:var(--text-3);font-weight:400">（选填，方便店主核对）</span></label>
-          <input type="text" id="note" maxlength="200" placeholder="例如：你的支付宝昵称">
+          <label><span id="noteLabel">付款备注</span> <span style="color:var(--text-3);font-weight:400">（选填，方便店主核对）</span></label>
+          <input type="text" id="note" maxlength="200" placeholder="例如：你的付款账号昵称">
         </div>
         <div class="field" style="margin-bottom:0">
           <label>付款截图 <span style="color:var(--text-3);font-weight:400">（选填）</span></label>
@@ -171,21 +195,50 @@
         return;
       }
       var o = r.data;
-      // 非支付宝订单 / 已标记过 / 非 pending → 直接去订单页
-      if (o.payMethod !== 'alipay' || o.payState !== 'unpaid' || o.status !== 'pending') {
+      // 已标记过 / 非 pending → 直接去订单页；未知支付方式也去订单页
+      if ((o.payMethod !== 'alipay' && o.payMethod !== 'usdt') || o.payState !== 'unpaid' || o.status !== 'pending') {
         goOrder();
         return;
       }
+      var isUsdt = o.payMethod === 'usdt';
+      document.getElementById('brandSub').textContent = isUsdt ? '币安 USDT 付款' : '支付宝付款';
+      document.title = 'Jayshop · ' + (isUsdt ? '币安 USDT 付款' : '支付宝付款');
       document.getElementById('pAmount').textContent = Jay.fmtMoney(o.totalPrice);
       document.getElementById('pProduct').textContent =
         (o.productName || '') + (o.quantity > 1 ? ' × ' + o.quantity : '');
       document.getElementById('pNo').textContent = '订单号：' + o.orderId;
+      document.getElementById('noteLabel').textContent = isUsdt ? '币安昵称 / 备注' : '支付宝昵称 / 备注';
+      if (isUsdt) {
+        document.getElementById('alipaySection').style.display = 'none';
+        var usdtSec = document.getElementById('usdtSection');
+        usdtSec.style.display = 'block';
+        if (!o.binanceUid) {
+          document.getElementById('uidMissing').style.display = 'block';
+        } else {
+          document.getElementById('uidText').textContent = o.binanceUid;
+        }
+        var qty = (o.usdtAmount != null ? o.usdtAmount : '--');
+        document.getElementById('usdtQty').textContent = qty;
+        document.getElementById('usdtQty2').textContent = qty;
+        document.getElementById('pAmountUsdt').style.display = 'block';
+        document.getElementById('pUsdtVal').textContent = qty;
+      } else {
+        document.getElementById('usdtSection').style.display = 'none';
+        document.getElementById('alipaySection').style.display = 'block';
+        // 重新触发二维码加载（带时间戳避免缓存旧码）
+        qrImg.src = '/api/qr?t=' + Date.now();
+      }
       loadingEl.style.display = 'none';
       stateEl.style.display = 'none';
       payEl.style.display = 'block';
-      // 重新触发二维码加载（带时间戳避免缓存旧码）
-      qrImg.src = '/api/qr?t=' + Date.now();
     }
+
+    document.getElementById('uidCopy').addEventListener('click', async function () {
+      var uid = document.getElementById('uidText').textContent.trim();
+      if (!uid || uid === '--') return;
+      var ok = await Jay.copyText(uid);
+      Jay.toast(ok ? 'UID 已复制，去币安 App 粘贴' : '复制失败，请手动输入 UID', !ok);
+    });
 
     document.getElementById('paidBtn').addEventListener('click', submitPaid);
     document.getElementById('shot').addEventListener('change', function () {

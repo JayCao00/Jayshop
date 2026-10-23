@@ -78,7 +78,7 @@
       failed: '订单异常',
       cancelled: '订单已取消',
     };
-    var PAY_TEXT = { alipay: '支付宝', usdt: 'USDT' };
+    var PAY_TEXT = { alipay: '支付宝', usdt: 'USDT（币安）' };
     var STATUS_TIP = {
       pending: '店主看到后会尽快确认并发货，请稍候。本页面会自动刷新。',
       confirmed: '订单已确认，卡密稍后送达，请稍候。本页面会自动刷新。',
@@ -107,16 +107,20 @@
       badge.className = 'status-badge ' + o.status;
       document.getElementById('oBadgeText').textContent = STATUS_TEXT[o.status] || o.status;
 
-      // 支付宝订单的专属提示
+      // 各支付方式 pending 订单的专属提示
       var tipEl = document.getElementById('oTip');
       var payAction = '';
-      if (o.payMethod === 'alipay' && o.status === 'pending') {
+      if ((o.payMethod === 'alipay' || o.payMethod === 'usdt') && o.status === 'pending') {
         if (o.payState === 'unpaid') {
-          tipEl.textContent = '请选择支付宝完成付款，然后点击「我已付款」通知店主。';
+          tipEl.textContent = o.payMethod === 'alipay'
+            ? '请选择支付宝完成付款，然后点击「我已付款」通知店主。'
+            : '请通过币安 UID 内部转账完成付款，然后点击「我已付款」通知店主。';
           payAction = '<div style="margin-top:12px"><a class="btn" style="text-decoration:none;display:inline-block;width:auto;padding:12px 40px" ' +
             'href="pay.html?id=' + encodeURIComponent(o.orderId) + '">去付款</a></div>';
         } else {
-          tipEl.textContent = '已收到您的付款通知，店主正在核对支付宝到账，请稍候。本页面会自动刷新。';
+          tipEl.textContent = o.payMethod === 'alipay'
+            ? '已收到您的付款通知，店主正在核对支付宝到账，请稍候。本页面会自动刷新。'
+            : '已收到您的付款通知，店主正在核对币安到账，请稍候。本页面会自动刷新。';
         }
       } else {
         tipEl.textContent = STATUS_TIP[o.status] || '';

@@ -49,6 +49,24 @@ const ADMIN_COOKIE = 'jayshop_admin';
 // 支付宝收款码：优先使用店主在管理后台上传的文件（data/alipay_qr.*），
 // 其次回退到环境变量 ALIPAY_QR_URL 指向的外部图片地址。
 const ALIPAY_QR_URL = (process.env.ALIPAY_QR_URL || '').trim();
+// 币安内部转账 UID（USDT 付款用）：客户通过币安 App 内"UID 转账"付款到此 UID。
+// 在 Render 环境变量 BINANCE_UID 中设置；未设置时 USDT 付款页会提示联系店主。
+const BINANCE_UID = (process.env.BINANCE_UID || '').trim();
+// 热门商品（首页"🔥热门"分类）：逗号分隔的商品 id。默认含 Gemini Pro、
+// Duolingo、Apple TV、Muse AI 四款，店主可在 Render 环境变量 FEATURED_IDS
+// 中覆盖为自己的 id 列表（逗号分隔）。
+const FEATURED_IDS = new Set(
+  (process.env.FEATURED_IDS ||
+    '6a31035939dc014325da2c66,6aa5bafb77c587d75cbe2a8e,6abeace70dbb401865ffb2d2,6ac65a53d07e0053469f477d')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
+/** 标记热门商品（首页"热门"分类用；同时保留其关键词分类） */
+function applyFeatured(pub) {
+  if (FEATURED_IDS.has(String(pub.id))) pub.featured = true;
+  return pub;
+}
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -277,14 +295,15 @@ function publicOpts(costInUsdt, markup) {
 
 async function getCatalog() {
   const overrides = priceOverrideMap();
+  const finalize = (p) => applyFeatured(applyPriceOverride(p, overrides));
   if (DEMO) {
     const src = demoCatalogSource();
     return src.items.map((p) =>
-      applyPriceOverride(toPublicProduct(p, publicOpts(src.costInUsdt, src.markup)), overrides));
+      finalize(toPublicProduct(p, publicOpts(src.costInUsdt, src.markup))));
   }
   const list = await fetchCatalog();
   return list.map((p) =>
-    applyPriceOverride(toPublicProduct(p, publicOpts(true, MARKUP_PCT)), overrides));
+    finalize(toPublicProduct(p, publicOpts(true, MARKUP_PCT))));
 }
 
 /** 返回 { raw, costInUsdt, costUsdt }：raw 为原始商品，costUsdt 为 USDT 成本（未知时为 null）。 */
@@ -312,8 +331,8 @@ async function getProduct(id) {
   const { raw, costInUsdt } = await getRawProduct(id);
   if (!raw) return null;
   const markup = DEMO ? (costInUsdt ? MARKUP_PCT : 0) : MARKUP_PCT;
-  return applyPriceOverride(
-    toPublicProduct(raw, publicOpts(costInUsdt, markup)), priceOverrideMap());
+  return applyFeatured(applyPriceOverride(
+    toPublicProduct(raw, publicOpts(costInUsdt, markup)), priceOverrideMap()));
 }
 
 function publicOrderRow(o) {
@@ -323,6 +342,11 @@ function publicOrderRow(o) {
     productName: o.product_name,
     quantity: o.quantity,
     totalPrice: o.total_price, // 人民币售价总额（¥）
+    // USDT 付款金额（= 人民币售价 / 汇率，保留 2 位），供币安内部转账使用
+    usdtAmount: o.total_price != null && USDT_CNY_RATE > 0
+      ? Math.round((Number(o.total_price) / USDT_CNY_RATE) * 100) / 100
+      : null,
+    binanceUid: BINANCE_UID || '', // 币安内部转账 UID（USDT 付款用）
     payMethod: o.pay_method || 'usdt',
     payState: o.pay_state || 'unpaid',
     createdAt: o.created_at,
@@ -506,8 +530,8 @@ app.get('/api/qr', (req, res) => {
   return res.status(404).json({ error: '店主尚未设置支付宝收款码，请联系店主' });
 });
 
-// ---------------- 客户标记已付款（支付宝订单） ----------------
-// multipart/form-data：screenshot（可选图片）+ note（可选，支付宝昵称/备注）
+// ---------------- 客户标记已付款（支付宝 / USDT 订单） ----------------
+// multipart/form-data：screenshot（可选图片）+ note（可选，昵称/备注）
 app.post('/api/orders/:id/mark-paid', payLimiter, withUpload(shotUpload, 'screenshot'), (req, res) => {
   const o = stmts.getOrder.get(req.params.id);
   // 上传了文件但订单校验失败时，删除孤儿文件
@@ -518,9 +542,10 @@ app.post('/api/orders/:id/mark-paid', payLimiter, withUpload(shotUpload, 'screen
     cleanup();
     return res.status(404).json({ error: '订单不存在' });
   }
-  if ((o.pay_method || 'usdt') !== 'alipay') {
+  const payMethod = o.pay_method || 'usdt';
+  if (payMethod !== 'alipay' && payMethod !== 'usdt') {
     cleanup();
-    return res.status(400).json({ error: '该订单为 USDT 支付，无需标记付款' });
+    return res.status(400).json({ error: '该订单不支持标记付款' });
   }
   if (o.status !== 'pending') {
     cleanup();
@@ -536,7 +561,7 @@ app.post('/api/orders/:id/mark-paid', payLimiter, withUpload(shotUpload, 'screen
   stmts.markPaid.run(note || null, shotPath, nowIso(), o.order_id);
 
   // 通知店主（文字 + 截图照片，fire-and-forget）
-  notifyPaidClaimed({ orderId: o.order_id, totalPrice: o.total_price, payNote: note });
+  notifyPaidClaimed({ orderId: o.order_id, totalPrice: o.total_price, payNote: note, payMethod });
   if (shotPath) {
     notifyPaidClaimedPhoto({ orderId: o.order_id, totalPrice: o.total_price, screenshotPath: shotPath }).catch(() => {});
   }

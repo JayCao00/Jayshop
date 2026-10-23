@@ -168,14 +168,11 @@
       var actions = '';
       if (st === 'pending') {
         var confirmBtn = '';
-        if (payMethod === 'alipay') {
-          if (payState === 'paid_claimed') {
-            confirmBtn = '<button class="btn small" data-act="confirm" data-id="' + escapeAttr(o.orderId) + '">✅ 确认收款并发货</button>';
-          }
-          // 未付款的支付宝订单：只允许取消，不可确认发货
-        } else {
-          confirmBtn = '<button class="btn small" data-act="confirm" data-id="' + escapeAttr(o.orderId) + '">✅ 确认并发货</button>';
+        // 只有客户标记已付款后，店主才能确认并发货（支付宝 / 币安 USDT 同理）
+        if (payState === 'paid_claimed') {
+          confirmBtn = '<button class="btn small" data-act="confirm" data-id="' + escapeAttr(o.orderId) + '">✅ 确认收款并发货</button>';
         }
+        // 未付款的订单：只允许取消，不可确认发货
         actions =
           '<div class="actions">' + confirmBtn +
             '<button class="btn small danger" data-act="cancel" data-id="' + escapeAttr(o.orderId) + '">取消订单</button>' +

@@ -99,6 +99,16 @@
 - admin.html：新增"🏷️ 商品定价"卡片，逐行显示成本/公式价，输入框设固定价，"恢复公式价"按钮清除。
 - 限制：自定义价存 SQLite，重建丢失（已告知用户）。价格校验：>0 且 ≤9999999，保留 2 位小数。
 
+## 5d. 2026-10-23 USDT 改走币安 UID 内部转账（用户 UID：1288453319）
+
+- 新增 `BINANCE_UID` 环境变量（Render Environment 设置；未设置时 USDT 付款页提示联系店主）。
+- `publicOrderRow` 新增 `usdtAmount`（= 人民币售价 ÷ 汇率，保留 2 位）和 `binanceUid`。
+- `/api/orders/:id/mark-paid` 放开给 USDT 订单（原来拒绝非支付宝订单）。
+- pay.html 双模式：支付宝扫码 / 币安 UID（UID 展示+一键复制+转账步骤+USDT 金额）。
+- product.html 支付选项文案更新为"USDT（币安转账）"；order.html 增加 USDT 待付款提示与"去付款"按钮。
+- 管理后台：未付款订单统一只允许取消、不可确认发货（支付宝/USDT 一致，防未收款发货）。
+- Telegram 付款通知文案区分币安/Alipay。
+
 ## 6. 文件清单
 
 ```

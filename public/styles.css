@@ -472,3 +472,9 @@ body {
   font-size: 15px; font-weight: 700; margin-bottom: 12px;
 }
 .modal-inner img { display: block; width: 100%; height: auto; border-radius: var(--radius-s); }
+
+/* 分类标签页 */
+.tabs{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 14px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:0 0 auto;padding:8px 15px;border-radius:999px;border:1px solid var(--line,#e5e5ea);background:#fff;font-size:13px;color:var(--text-2,#666);cursor:pointer;white-space:nowrap}
+.tab.active{background:#111;color:#fff;border-color:#111;font-weight:600}
