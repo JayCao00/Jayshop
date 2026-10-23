@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Jayshop · 支付宝付款</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="home-link" href="index.html">
+        <div class="logo">J</div>
+        <div>
+          <div class="brand-name">Jayshop</div>
+          <div class="brand-sub">支付宝付款</div>
+        </div>
+      </a>
+    </div>
+  </header>
+
+  <main class="container narrow" id="app">
+    <!-- 加载中 -->
+    <div id="loading" class="state">
+      <div class="spinner"></div>
+      <p>订单加载中…</p>
+    </div>
+    <!-- 状态区 -->
+    <div id="state" style="display:none"></div>
+
+    <!-- 付款主体 -->
+    <div id="pay" style="display:none">
+      <div class="card" style="text-align:center;padding:28px 20px">
+        <div style="font-size:13px;color:var(--text-2)">应付金额</div>
+        <div id="pAmount" style="font-size:40px;font-weight:800;letter-spacing:-0.02em;margin:6px 0 4px"></div>
+        <div id="pProduct" style="font-size:14px;color:var(--text-2)"></div>
+        <div class="order-no" id="pNo" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card" style="text-align:center">
+        <h3 style="margin:0 0 4px;font-size:16px">扫码付款</h3>
+        <p style="margin:0 0 16px;font-size:13px;color:var(--text-2)">打开支付宝「扫一扫」，按上方金额付款</p>
+        <div class="qr-box">
+          <img id="qrImg" src="/api/qr" alt="支付宝收款码" style="display:none">
+          <div id="qrMissing" style="display:none;padding:32px 16px;color:var(--text-2);font-size:14px">
+            店主尚未设置收款码<br>请联系店主获取付款方式
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="field">
+          <label>支付宝昵称 / 备注 <span style="color:var(--text-3);font-weight:400">（选填，方便店主核对）</span></label>
+          <input type="text" id="note" maxlength="200" placeholder="例如：你的支付宝昵称">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>付款截图 <span style="color:var(--text-3);font-weight:400">（选填）</span></label>
+          <input type="file" id="shot" accept="image/png,image/jpeg,image/gif,image/webp" class="file-input">
+          <div class="hint">上传付款成功截图，店主核对更快（仅支持图片，最大 5MB）</div>
+          <div class="error-msg" id="shotErr">请选择图片文件（PNG / JPG / GIF / WebP，且不超过 5MB）</div>
+        </div>
+      </div>
+
+      <button class="btn" id="paidBtn" style="margin-top:4px">我已付款，通知店主发货</button>
+      <p style="text-align:center;font-size:13px;color:var(--text-2)">
+        付款后点击上方按钮，店主核对到账后即为您发货。<br>
+        <a href="index.html" style="color:var(--brand-1);text-decoration:none">返回首页</a>
+      </p>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    var id = Jay.param('id');
+    var loadingEl = document.getElementById('loading');
+    var stateEl = document.getElementById('state');
+    var payEl = document.getElementById('pay');
+    var submitting = false;
+
+    function showState(html) {
+      loadingEl.style.display = 'none';
+      payEl.style.display = 'none';
+      stateEl.style.display = 'block';
+      stateEl.innerHTML = html;
+    }
+
+    function goOrder() {
+      window.location.replace('order.html?id=' + encodeURIComponent(id));
+    }
+
+    // 收款码加载失败 → 提示联系店主
+    var qrImg = document.getElementById('qrImg');
+    qrImg.addEventListener('load', function () { qrImg.style.display = 'block'; });
+    qrImg.addEventListener('error', function () {
+      qrImg.style.display = 'none';
+      document.getElementById('qrMissing').style.display = 'block';
+    });
+
+    function validShot(file) {
+      if (!file) return true;
+      var okType = /^(image\/png|image\/jpeg|image\/gif|image\/webp)$/.test(file.type);
+      return okType && file.size <= 5 * 1024 * 1024;
+    }
+
+    async function submitPaid() {
+      if (submitting) return;
+      var shot = document.getElementById('shot').files[0] || null;
+      var shotField = document.getElementById('shot');
+      if (!validShot(shot)) {
+        shotField.closest('.field').classList.add('invalid');
+        document.getElementById('shotErr').style.display = 'block';
+        Jay.toast('截图需为图片且不超过 5MB', true);
+        return;
+      }
+      shotField.closest('.field').classList.remove('invalid');
+      document.getElementById('shotErr').style.display = 'none';
+
+      submitting = true;
+      var btn = document.getElementById('paidBtn');
+      btn.disabled = true;
+      btn.textContent = '提交中…';
+
+      var form = new FormData();
+      form.append('note', document.getElementById('note').value.trim());
+      if (shot) form.append('screenshot', shot);
+
+      var r;
+      try {
+        var res = await fetch('/api/orders/' + encodeURIComponent(id) + '/mark-paid', {
+          method: 'POST',
+          body: form,
+        });
+        var data = null;
+        try { data = await res.json(); } catch (e) { /* ignore */ }
+        r = { ok: res.ok, status: res.status, data: data };
+      } catch (e) {
+        r = { ok: false, status: 0, networkError: true };
+      }
+
+      if (r.ok) {
+        Jay.toast('已通知店主，请等待核对发货');
+        setTimeout(goOrder, 800);
+        return;
+      }
+      submitting = false;
+      btn.disabled = false;
+      btn.textContent = '我已付款，通知店主发货';
+      if (r.networkError) {
+        Jay.toast('网络连接失败，请检查网络后重试', true);
+      } else if (r.status === 409) {
+        Jay.toast('该订单已提交过，请等待店主确认', true);
+        setTimeout(goOrder, 1200);
+      } else {
+        var msg = (r.data && r.data.error) || ('提交失败（' + r.status + '），请重试');
+        Jay.toast(msg, true);
+      }
+    }
+
+    async function load() {
+      if (!id) {
+        showState(Jay.notFoundHTML('缺少订单号', '请从商品页下单后再付款。', 'index.html'));
+        return;
+      }
+      var r = await Jay.api('/api/orders/' + encodeURIComponent(id));
+      if (!r.ok || !r.data || !r.data.orderId) {
+        showState(Jay.notFoundHTML('订单不存在', '该订单号有误或订单已被删除。', 'index.html'));
+        return;
+      }
+      var o = r.data;
+      // 非支付宝订单 / 已标记过 / 非 pending → 直接去订单页
+      if (o.payMethod !== 'alipay' || o.payState !== 'unpaid' || o.status !== 'pending') {
+        goOrder();
+        return;
+      }
+      document.getElementById('pAmount').textContent = Jay.fmtMoney(o.totalPrice);
+      document.getElementById('pProduct').textContent =
+        (o.productName || '') + (o.quantity > 1 ? ' × ' + o.quantity : '');
+      document.getElementById('pNo').textContent = '订单号：' + o.orderId;
+      loadingEl.style.display = 'none';
+      stateEl.style.display = 'none';
+      payEl.style.display = 'block';
+      // 重新触发二维码加载（带时间戳避免缓存旧码）
+      qrImg.src = '/api/qr?t=' + Date.now();
+    }
+
+    document.getElementById('paidBtn').addEventListener('click', submitPaid);
+    document.getElementById('shot').addEventListener('change', function () {
+      this.closest('.field').classList.remove('invalid');
+      document.getElementById('shotErr').style.display = 'none';
+    });
+
+    load();
+  })();
+  </script>
+</body>
+</html>

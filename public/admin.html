@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Jayshop · 管理后台</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="home-link" href="index.html">
+        <div class="logo">J</div>
+        <div>
+          <div class="brand-name">Jayshop</div>
+          <div class="brand-sub">管理后台</div>
+        </div>
+      </a>
+    </div>
+  </header>
+
+  <main class="container" id="app">
+
+    <!-- 登录 -->
+    <div id="loginView" class="card login-card">
+      <h2>🔐 店主登录</h2>
+      <p>请输入管理密码以查看和处理订单。</p>
+      <form id="loginForm">
+        <div class="field">
+          <label>管理密码</label>
+          <input type="password" id="pwd" autocomplete="current-password" placeholder="请输入管理密码">
+          <div class="error-msg" id="loginErr">密码错误，请重试</div>
+        </div>
+        <button class="btn" type="submit" id="loginBtn">登录</button>
+      </form>
+    </div>
+
+    <!-- 订单管理 -->
+    <div id="adminView" style="display:none">
+      <div class="admin-toolbar">
+        <h2>订单管理 <span class="count-pill" id="pendingCount"></span></h2>
+        <div>
+          <button class="btn ghost small" id="refreshBtn">🔄 刷新</button>
+          <button class="btn ghost small" id="logoutBtn">退出</button>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="meta-row">
+          <span class="k">供应商余额</span>
+          <span id="balanceLine" style="font-weight:700">加载中…</span>
+        </div>
+        <div class="hint">余额为 USDT（供应商侧）；订单实付为人民币（¥），成本为 USDT，两者分开核算。</div>
+      </div>
+
+      <!-- 收款码管理 -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin:0 0 8px;font-size:15px">💙 支付宝收款码</h3>
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+          <div class="qr-box small">
+            <img id="qrPreview" src="/api/qr" alt="当前收款码" style="display:none">
+            <div id="qrEmpty" style="display:none;padding:24px 12px;color:var(--text-2);font-size:13px">尚未设置收款码</div>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
+              上传后客户付款页即展示此码。未上传时若设置了环境变量 <code>ALIPAY_QR_URL</code> 则使用该地址。
+            </p>
+            <input type="file" id="qrFile" accept="image/png,image/jpeg,image/gif,image/webp" class="file-input">
+            <div style="margin-top:10px">
+              <button class="btn small" id="qrUploadBtn" style="width:auto;padding:10px 24px">上传 / 更换收款码</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="loading" class="state" style="padding:32px">
+        <div class="spinner"></div>
+        <p>订单加载中…</p>
+      </div>
+      <div id="list"></div>
+      <div id="listState" style="display:none"></div>
+    </div>
+
+    <!-- 截图查看弹窗 -->
+    <div id="shotModal" class="modal" style="display:none">
+      <div class="modal-inner">
+        <div class="modal-head">
+          <span>付款截图</span>
+          <button class="link-btn" id="shotClose">✕ 关闭</button>
+        </div>
+        <img id="shotImg" alt="付款截图" style="display:none">
+        <div id="shotErr" style="display:none;color:var(--err);font-size:14px;padding:24px">截图加载失败</div>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="app.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    // 认证说明：后端约定为 POST /api/admin/login {password}，
+    // 其余管理接口约定如下（前端假设，后端联调时需保持一致）：
+    //   GET  /api/admin/orders                      → 请求头 X-Admin-Password: <密码>
+    //   POST /api/admin/orders/:id/confirm {password} → JSON body 带 password 字段
+    //   POST /api/admin/orders/:id/cancel  {password} → JSON body 带 password 字段
+    // 若后端改为 token 鉴权，只需集中修改 app.js 的 adminApi()。
+    var LS_KEY = 'jayshop_admin_pwd';
+    var pwd = sessionStorage.getItem(LS_KEY) || '';
+
+    var loginView = document.getElementById('loginView');
+    var adminView = document.getElementById('adminView');
+    var loadingEl = document.getElementById('loading');
+    var listEl = document.getElementById('list');
+    var listState = document.getElementById('listState');
+
+    var STATUS_LABEL = {
+      pending: '待确认', confirmed: '已确认',
+      delivered: '已发货', failed: '异常', cancelled: '已取消'
+    };
+    var PAY_LABEL = { alipay: '支付宝', usdt: 'USDT' };
+
+    function escapeAttr(s) {
+      return String(s).replace(/\\/g, '\\\\').replace(/"/g, '&quot;');
+    }
+
+    function costLine(o) {
+      if (o.totalCostUsdt == null) return '';
+      return '　·　成本 ' + Jay.esc(o.totalCostUsdt) + ' USDT';
+    }
+
+    function orderCard(o) {
+      var st = o.status || 'pending';
+      var payMethod = o.payMethod || 'usdt';
+      var payState = o.payState || 'unpaid';
+      var cancelled = (st === 'cancelled' || st === 'failed');
+
+      // 状态徽标：支付宝订单区分"待客户付款 / 待确认收款"
+      var label = STATUS_LABEL[st] || st;
+      if (st === 'pending' && payMethod === 'alipay') {
+        label = (payState === 'paid_claimed') ? '待确认收款' : '待客户付款';
+      }
+      var badge = '<span class="status-badge ' + st + '">' +
+        '<span class="dot"></span>' + Jay.esc(label) + '</span>';
+      var payBadge = '<span class="pay-badge">' + Jay.esc(PAY_LABEL[payMethod] || 'USDT') + '</span>';
+
+      var extra = '';
+      if (o.payNote) {
+        extra += '<div class="note-line">📝 客户备注：' + Jay.esc(o.payNote) + '</div>';
+      }
+      if (o.hasScreenshot && o.screenshotName) {
+        extra += '<div class="note-line"><button class="link-btn" data-act="shot" data-id="' +
+          escapeAttr(o.orderId) + '" data-shot="' + escapeAttr(o.screenshotName) + '">🧾 查看付款截图</button></div>';
+      }
+
+      var actions = '';
+      if (st === 'pending') {
+        var confirmBtn = '';
+        if (payMethod === 'alipay') {
+          if (payState === 'paid_claimed') {
+            confirmBtn = '<button class="btn small" data-act="confirm" data-id="' + escapeAttr(o.orderId) + '">✅ 确认收款并发货</button>';
+          }
+          // 未付款的支付宝订单：只允许取消，不可确认发货
+        } else {
+          confirmBtn = '<button class="btn small" data-act="confirm" data-id="' + escapeAttr(o.orderId) + '">✅ 确认并发货</button>';
+        }
+        actions =
+          '<div class="actions">' + confirmBtn +
+            '<button class="btn small danger" data-act="cancel" data-id="' + escapeAttr(o.orderId) + '">取消订单</button>' +
+          '</div>';
+      }
+
+      return (
+        '<div class="card order-card' + (cancelled ? ' cancelled-card' : '') + '">' +
+          '<div class="head">' +
+            '<span class="oid">' + Jay.esc(o.orderId) + '</span>' + badge + payBadge +
+          '</div>' +
+          '<div class="pname">' + Jay.esc(o.productName || '--') + '</div>' +
+          '<div class="meta">数量 × ' + Jay.esc(o.quantity != null ? o.quantity : '--') +
+            '　·　实付 ' + Jay.fmtMoney(o.totalPrice) + costLine(o) +
+            '　·　' + Jay.esc(Jay.fmtTime(o.createdAt)) + '</div>' +
+          extra +
+          (o.lastError ? '<div class="warn-line">⚠️ ' + Jay.esc(o.lastError) + '，处理后可重试发货</div>' : '') +
+          actions +
+        '</div>'
+      );
+    }
+
+    function renderList(orders) {
+      loadingEl.style.display = 'none';
+      if (!orders || orders.length === 0) {
+        listEl.innerHTML = '';
+        listState.style.display = 'block';
+        listState.innerHTML = Jay.emptyStateHTML('暂无订单', '有新订单时会出现在这里。');
+        document.getElementById('pendingCount').textContent = '';
+        return;
+      }
+      listState.style.display = 'none';
+      // pending 优先，其次按时间倒序
+      var pend = orders.filter(function (o) { return o.status === 'pending'; });
+      var rest = orders.filter(function (o) { return o.status !== 'pending'; });
+      document.getElementById('pendingCount').textContent =
+        pend.length > 0 ? '待处理 ' + pend.length : '全部已处理';
+      listEl.innerHTML = pend.concat(rest).map(orderCard).join('');
+    }
+
+    async function loadOrders() {
+      listEl.innerHTML = '';
+      listState.style.display = 'none';
+      loadingEl.style.display = 'block';
+      var r = await Jay.adminApi('/api/admin/orders', pwd);
+      if (!r.ok) {
+        loadingEl.style.display = 'none';
+        listState.style.display = 'block';
+        if (r.status === 401 || r.status === 403) {
+          logout('登录已过期，请重新登录');
+        } else {
+          listState.innerHTML = Jay.errorStateHTML('订单加载失败',
+            r.networkError ? '网络连接失败，请检查网络后重试。' : '服务器繁忙（' + r.status + '），请稍后重试。');
+        }
+        return;
+      }
+      renderList((r.data && r.data.orders) || []);
+    }
+
+    async function doAction(orderId, action) {
+      var btns = listEl.querySelectorAll('button[data-id="' + CSS.escape(orderId) + '"]');
+      btns.forEach(function (b) { b.disabled = true; });
+      var url = '/api/admin/orders/' + encodeURIComponent(orderId) +
+        (action === 'confirm' ? '/confirm' : '/cancel');
+      var r = await Jay.adminApi(url, pwd, { method: 'POST' });
+      if (r.ok) {
+        Jay.toast((r.data && r.data.message) || (action === 'confirm' ? '已确认并发货 ✅' : '订单已取消'));
+        loadOrders();
+      } else {
+        btns.forEach(function (b) { b.disabled = false; });
+        if (r.status === 401 || r.status === 403) {
+          logout('登录已过期，请重新登录');
+        } else {
+          var msg = (r.data && r.data.error) || ('操作失败（' + r.status + '），请重试');
+          Jay.toast(msg, true);
+          if (r.status === 402) loadOrders();
+        }
+      }
+    }
+
+    // 事件委托：确认 / 取消 / 查看截图按钮
+    listEl.addEventListener('click', function (e) {
+      var btn = e.target.closest('button[data-act]');
+      if (!btn || btn.disabled) return;
+      var act = btn.getAttribute('data-act');
+      var orderId = btn.getAttribute('data-id');
+      if (act === 'cancel') {
+        if (!confirm('确定要取消订单 ' + orderId + ' 吗？')) return;
+      }
+      if (act === 'shot') {
+        viewScreenshot(btn.getAttribute('data-shot'));
+        return;
+      }
+      doAction(orderId, act);
+    });
+
+    // 付款截图：用管理密码头取 blob，避免新标签页鉴权问题
+    var shotModal = document.getElementById('shotModal');
+    var shotImg = document.getElementById('shotImg');
+    var shotErr = document.getElementById('shotErr');
+    var shotUrl = null;
+    async function viewScreenshot(name) {
+      shotImg.style.display = 'none';
+      shotErr.style.display = 'none';
+      shotModal.style.display = 'flex';
+      try {
+        var res = await fetch('/api/admin/uploads/' + encodeURIComponent(name), {
+          headers: { 'X-Admin-Password': pwd },
+        });
+        if (!res.ok) throw new Error('http ' + res.status);
+        var blob = await res.blob();
+        if (shotUrl) URL.revokeObjectURL(shotUrl);
+        shotUrl = URL.createObjectURL(blob);
+        shotImg.src = shotUrl;
+        shotImg.style.display = 'block';
+      } catch (err) {
+        shotErr.style.display = 'block';
+      }
+    }
+    document.getElementById('shotClose').addEventListener('click', function () {
+      shotModal.style.display = 'none';
+    });
+    shotModal.addEventListener('click', function (e) {
+      if (e.target === shotModal) shotModal.style.display = 'none';
+    });
+
+    // 供应商余额（USDT）
+    async function loadBalance() {
+      var el = document.getElementById('balanceLine');
+      var r = await Jay.adminApi('/api/admin/balance', pwd);
+      if (!r.ok || !r.data) {
+        el.textContent = '查询失败';
+        return;
+      }
+      if (r.data.demoMode) {
+        el.textContent = '演示模式（未连接供应商）';
+      } else if (r.data.balance == null) {
+        el.textContent = '查询失败';
+      } else {
+        el.textContent = Number(r.data.balance) + ' USDT';
+      }
+    }
+
+    // 收款码预览与上传
+    var qrPreview = document.getElementById('qrPreview');
+    var qrEmpty = document.getElementById('qrEmpty');
+    function refreshQrPreview() {
+      qrPreview.style.display = 'none';
+      qrEmpty.style.display = 'none';
+      qrPreview.src = '/api/qr?t=' + Date.now();
+    }
+    qrPreview.addEventListener('load', function () {
+      // 404 JSON 会触发 error；302 跳转到外部 URL 也能正常加载
+      qrPreview.style.display = 'block';
+    });
+    qrPreview.addEventListener('error', function () {
+      qrPreview.style.display = 'none';
+      qrEmpty.style.display = 'block';
+    });
+    document.getElementById('qrUploadBtn').addEventListener('click', async function () {
+      var file = document.getElementById('qrFile').files[0];
+      if (!file) {
+        Jay.toast('请先选择收款码图片', true);
+        return;
+      }
+      var okType = /^(image\/png|image\/jpeg|image\/gif|image\/webp)$/.test(file.type);
+      if (!okType || file.size > 2 * 1024 * 1024) {
+        Jay.toast('仅支持 PNG / JPG / GIF / WebP，且不超过 2MB', true);
+        return;
+      }
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = '上传中…';
+      var form = new FormData();
+      form.append('qr', file);
+      var r;
+      try {
+        var res = await fetch('/api/admin/qr', {
+          method: 'POST',
+          headers: { 'X-Admin-Password': pwd },
+          body: form,
+        });
+        var data = null;
+        try { data = await res.json(); } catch (e) { /* ignore */ }
+        r = { ok: res.ok, status: res.status, data: data };
+      } catch (e) {
+        r = { ok: false, networkError: true };
+      }
+      btn.disabled = false;
+      btn.textContent = '上传 / 更换收款码';
+      if (r.ok) {
+        Jay.toast('收款码已更新 ✅');
+        refreshQrPreview();
+        document.getElementById('qrFile').value = '';
+      } else if (r.status === 401 || r.status === 403) {
+        logout('登录已过期，请重新登录');
+      } else {
+        Jay.toast((r.data && r.data.error) || '上传失败，请重试', true);
+      }
+    });
+
+    async function login(password) {
+      var btn = document.getElementById('loginBtn');
+      var errEl = document.getElementById('loginErr');
+      errEl.parentElement.classList.remove('invalid');
+      btn.disabled = true;
+      btn.textContent = '登录中…';
+      var r = await Jay.api('/api/admin/login', { method: 'POST', body: { password: password } });
+      btn.disabled = false;
+      btn.textContent = '登录';
+      if (r.ok) {
+        pwd = password;
+        sessionStorage.setItem(LS_KEY, pwd);
+        loginView.style.display = 'none';
+        adminView.style.display = 'block';
+        loadOrders();
+        loadBalance();
+        refreshQrPreview();
+      } else {
+        errEl.parentElement.classList.add('invalid');
+        if (!r.networkError && r.status !== 401) {
+          Jay.toast('登录失败（' + r.status + '），请重试', true);
+        }
+      }
+    }
+
+    function logout(msg) {
+      pwd = '';
+      sessionStorage.removeItem(LS_KEY);
+      adminView.style.display = 'none';
+      loginView.style.display = 'block';
+      document.getElementById('pwd').value = '';
+      if (msg) Jay.toast(msg, true);
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var v = document.getElementById('pwd').value;
+      if (!v) { Jay.toast('请输入管理密码', true); return; }
+      login(v);
+    });
+    document.getElementById('pwd').addEventListener('input', function () {
+      this.parentElement.classList.remove('invalid');
+    });
+    document.getElementById('refreshBtn').addEventListener('click', loadOrders);
+    document.getElementById('logoutBtn').addEventListener('click', function () { logout(); });
+
+    // 已有密码缓存时尝试直接进入
+    if (pwd) {
+      loginView.style.display = 'none';
+      adminView.style.display = 'block';
+      loadOrders();
+      loadBalance();
+      refreshQrPreview();
+    }
+  })();
+  </script>
+</body>
+</html>
