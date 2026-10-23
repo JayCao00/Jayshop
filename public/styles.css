@@ -80,6 +80,34 @@ body {
   display: flex; align-items: center; gap: 10px;
 }
 
+/* ---------- 导航栏：搜索 + 查订单 ---------- */
+.nav-inner { gap: 14px; }
+.nav-search {
+  flex: 1; min-width: 120px; max-width: 420px; margin-left: auto;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-2, #f5f5f7); border-radius: 999px;
+  padding: 8px 14px;
+}
+.nav-search-icon { font-size: 14px; flex: none; }
+.nav-search input {
+  flex: 1; border: none; background: transparent; outline: none;
+  font-size: 14px; color: var(--text); min-width: 0;
+}
+.nav-search input::placeholder { color: var(--text-2); }
+.nav-search input::-webkit-search-cancel-button { display: none; }
+.nav-search-clear {
+  border: none; background: none; cursor: pointer; flex: none;
+  color: var(--text-2); font-size: 13px; padding: 2px 4px;
+}
+.nav-link {
+  flex: none; font-size: 14px; font-weight: 600; color: var(--text);
+  text-decoration: none; padding: 8px 4px; white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .nav-inner { flex-wrap: wrap; row-gap: 10px; }
+  .nav-search { order: 3; flex-basis: 100%; max-width: none; margin-left: 0; }
+}
+
 /* ---------- 演示横幅（文案见 index.html，不得删除） ---------- */
 .demo-banner {
   background: #fdf8ec;
@@ -371,6 +399,38 @@ body {
 .admin-tab.active {
   background: #111; color: #fff; border-color: #111; font-weight: 700;
 }
+
+/* 联系店主悬浮窗 */
+.contact-fab {
+  position: fixed; right: 16px; bottom: 20px; z-index: 90;
+  padding: 12px 18px; border: none; border-radius: 999px;
+  background: #111; color: #fff; font-size: 14px; font-weight: 600;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); cursor: pointer;
+}
+.contact-fab:active { transform: scale(0.96); }
+.contact-modal { max-width: 400px; }
+.contact-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 0; border-top: 1px solid var(--line, #eee);
+}
+.contact-row:first-child { border-top: none; padding-top: 0; }
+.contact-label { font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+.contact-value { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; }
+.contact-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.contact-actions .btn { width: auto; padding: 8px 14px; font-size: 13px; text-decoration: none; }
+.contact-tip { font-size: 12px; color: var(--text-2); margin: 12px 0 0; }
+
+/* 店铺公告横幅 */
+.announce-bar {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: #fff8e6; border-bottom: 1px solid #f0e0b0;
+  padding: 9px 16px; font-size: 13px; color: #7a5c00; text-align: center;
+}
+.announce-text { flex: 1; }
+.announce-close {
+  border: none; background: none; cursor: pointer; flex: none;
+  color: #a08000; font-size: 12px; padding: 2px 6px;
+}
 .count-pill {
   background: var(--info-bg); color: var(--brand-1);
   font-size: 12px; font-weight: 600;
@@ -489,3 +549,27 @@ body {
 .tabs::-webkit-scrollbar{display:none}
 .tab{flex:0 0 auto;padding:8px 15px;border-radius:999px;border:1px solid var(--line,#e5e5ea);background:#fff;font-size:13px;color:var(--text-2,#666);cursor:pointer;white-space:nowrap}
 .tab.active{background:#111;color:#fff;border-color:#111;font-weight:600}
+
+/* 购买指南 */
+.guide {
+  max-width: var(--maxw); margin: 0 auto; padding: 36px 20px 8px;
+}
+.guide h2 { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 4px; }
+.guide-sub { font-size: 13px; color: var(--text-2); margin: 0 0 20px; }
+.guide-steps {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+}
+.guide-step {
+  background: var(--card, #fff); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 18px 16px;
+}
+.guide-num {
+  font-size: 13px; font-weight: 700; color: var(--brand-1);
+  letter-spacing: 0.08em; margin-bottom: 8px;
+}
+.guide-step h3 { font-size: 15px; font-weight: 700; margin: 0 0 6px; }
+.guide-step p { font-size: 13px; color: var(--text-2); margin: 0; line-height: 1.6; }
+.guide-step p strong { color: var(--err, #c00); }
+@media (max-width: 640px) {
+  .guide-steps { grid-template-columns: 1fr; }
+}

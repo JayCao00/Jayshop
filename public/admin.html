@@ -43,6 +43,7 @@
         <h2>管理后台 <span class="count-pill" id="pendingCount"></span></h2>
         <div>
           <button class="btn ghost small" id="refreshBtn">🔄 刷新</button>
+          <button class="btn ghost small" id="exportBtn">📥 导出</button>
           <button class="btn ghost small" id="logoutBtn">退出</button>
         </div>
       </div>
@@ -50,6 +51,7 @@
         <button class="admin-tab active" data-tab="orders">📦 订单</button>
         <button class="admin-tab" data-tab="pricing">🏷️ 定价</button>
         <button class="admin-tab" data-tab="payments">💰 收款</button>
+        <button class="admin-tab" data-tab="notice">📢 公告</button>
       </nav>
 
       <!-- 订单 -->
@@ -76,9 +78,13 @@
       <div class="card" style="margin-bottom:16px">
         <h3 style="margin:0 0 8px;font-size:15px">🏷️ 商品定价</h3>
         <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
-          可为单个商品设置固定售价（人民币）。不填则按公式自动计价（成本 ×（1+<span id="markupLabel">0.30</span>）× 汇率）。
-          <span style="color:var(--warn,#b45309)">自定义价格保存在服务器数据库中，服务重建后会丢失，调完价记得截图留底。</span>
+          可为单个商品设置固定售价（人民币）。不填则按公式自动计价（成本 ×（1+<span id="markupLabel">0.30</span>）× 汇率）。<br>
+          🔒 = 已锁定：该价格已写入环境变量 <code>PRICE_OVERRIDES</code>，每次更新重建后自动恢复。<br>
+          后台修改立即生效；想让它永久生效，点下方按钮复制配置，粘贴到 Render 环境变量 <code>PRICE_OVERRIDES</code> 并保存。
         </p>
+        <div style="margin-bottom:10px">
+          <button class="btn ghost small" id="copyPriceEnv" style="width:auto;padding:8px 16px">📋 生成环境变量配置</button>
+        </div>
         <div id="priceList"><p style="font-size:13px;color:var(--text-2)">定价数据加载中…</p></div>
       </div>
       </div><!-- /tab-pricing -->
@@ -120,6 +126,24 @@
         <div id="binanceUidStatus" style="margin-top:8px;font-size:13px;color:var(--text-2)"></div>
       </div>
       </div><!-- /tab-payments -->
+
+      <!-- 公告 -->
+      <div id="tab-notice" class="admin-panel" style="display:none">
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin:0 0 8px;font-size:15px">📢 店铺公告</h3>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
+          显示在网站顶部的横幅（200字以内）。留空则使用环境变量 <code>ANNOUNCEMENT</code> 的值；都为空则不显示。
+          <span style="color:var(--warn,#b45309)">存在数据库中，服务重建后会丢失，重要公告建议同时写到环境变量。</span>
+        </p>
+        <textarea id="announceInput" rows="3" maxlength="200" placeholder="例如：国庆期间发货可能延迟，请耐心等待～"
+          style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line,#ddd);border-radius:8px;font-size:14px;resize:vertical"></textarea>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn small" id="announceSave" style="width:auto;padding:10px 24px">发布公告</button>
+          <button class="btn ghost small" id="announceClear" style="width:auto;padding:10px 24px">清空</button>
+        </div>
+        <div id="announceStatus" style="margin-top:8px;font-size:13px;color:var(--text-2)"></div>
+      </div>
+      </div><!-- /tab-notice -->
     </div>
 
     <!-- 截图查看弹窗 -->
@@ -155,6 +179,7 @@
     var loadingEl = document.getElementById('loading');
     var listEl = document.getElementById('list');
     var listState = document.getElementById('listState');
+    var currentOrders = []; // 当前列表数据，供导出 CSV 用
 
     // 后台标签页：订单 / 定价 / 收款（各面板数据懒加载，切换到才请求）
     var loadedTabs = {};
@@ -172,6 +197,7 @@
         if (name === 'orders') { loadOrders(); loadBalance(); }
         else if (name === 'pricing') { loadPrices(); }
         else if (name === 'payments') { refreshQrPreview(); loadBinanceUid(); }
+        else if (name === 'notice') { loadAnnouncement(); }
       }
     }
     document.getElementById('adminTabs').addEventListener('click', function (e) {
@@ -256,6 +282,7 @@
 
     function renderList(orders) {
       loadingEl.style.display = 'none';
+      currentOrders = orders || [];
       if (!orders || orders.length === 0) {
         listEl.innerHTML = '';
         listState.style.display = 'block';
@@ -408,7 +435,37 @@
       loadBinanceUid();
     });
 
+    // 店铺公告
+    async function loadAnnouncement() {
+      var st = document.getElementById('announceStatus');
+      var r = await Jay.adminApi('/api/admin/settings', pwd);
+      if (!r.ok || !r.data) {
+        st.textContent = '读取失败，请刷新重试';
+        return;
+      }
+      document.getElementById('announceInput').value = r.data.announcement || '';
+      st.textContent = r.data.announcement
+        ? '当前生效：后台设置的公告'
+        : (r.data.announcementEnv ? '当前生效：环境变量 ANNOUNCEMENT' : '当前无公告，前台不显示横幅');
+    }
+    async function saveAnnouncement(clear) {
+      var btn = document.getElementById('announceSave');
+      var v = clear ? '' : document.getElementById('announceInput').value.trim().slice(0, 200);
+      btn.disabled = true;
+      var r = await Jay.adminApi('/api/admin/settings', pwd, { method: 'POST', body: { announcement: v } });
+      btn.disabled = false;
+      if (!r.ok) {
+        Jay.toast('保存失败：' + ((r.data && r.data.error) || r.status), true);
+        return;
+      }
+      Jay.toast(clear ? '公告已清空' : '公告已发布');
+      loadAnnouncement();
+    }
+    document.getElementById('announceSave').addEventListener('click', function () { saveAnnouncement(false); });
+    document.getElementById('announceClear').addEventListener('click', function () { saveAnnouncement(true); });
+
     // 商品定价：列表 + 自定义售价
+    var priceProducts = []; // 缓存，供"生成环境变量配置"用
     async function loadPrices() {
       var box = document.getElementById('priceList');
       var r = await Jay.adminApi('/api/admin/products', pwd);
@@ -419,18 +476,26 @@
       var mk = document.getElementById('markupLabel');
       if (mk && r.data.markupPct != null) mk.textContent = r.data.markupPct;
       var items = r.data.products || [];
+      priceProducts = items;
       if (!items.length) {
         box.innerHTML = '<p style="font-size:13px;color:var(--text-2)">暂无商品</p>';
         return;
       }
       box.innerHTML = items.map(function (p) {
         var custom = p.overridePrice !== null && p.overridePrice !== undefined;
+        var lockBadge = p.fromEnv
+          ? ' <span title="已写入环境变量 PRICE_OVERRIDES，重建后自动恢复" style="font-size:12px">🔒</span>'
+          : '';
+        var envNote = (p.fromEnv && p.envPrice !== null && p.envPrice !== undefined &&
+            (!custom || Number(p.envPrice) !== Number(p.overridePrice)))
+          ? ' · <span style="color:var(--text-2)">环境变量价 ' + Jay.fmtMoney(p.envPrice) + '（重建后恢复为此价）</span>'
+          : '';
         return '<div class="price-row" data-id="' + Jay.esc(p.id) + '" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line,#eee)">' +
           '<div style="flex:1;min-width:140px">' +
-            '<div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + Jay.esc(p.name) + '">' + Jay.esc(p.name) + (p.inStock ? '' : ' <span style="color:var(--err)">(售罄)</span>') + '</div>' +
+            '<div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + Jay.esc(p.name) + '">' + Jay.esc(p.name) + lockBadge + (p.inStock ? '' : ' <span style="color:var(--err)">(售罄)</span>') + '</div>' +
             '<div style="font-size:12px;color:var(--text-2)">成本 ' + (p.costUsdt !== null ? Jay.esc(p.costUsdt) + 'U' : '--') +
               ' · 公式价 ' + Jay.fmtMoney(p.formulaPrice) +
-              (custom ? ' · <span style="color:var(--warn,#b45309)">自定义价 ' + Jay.fmtMoney(p.overridePrice) + '</span>' : '') + '</div>' +
+              (custom ? ' · <span style="color:var(--warn,#b45309)">自定义价 ' + Jay.fmtMoney(p.overridePrice) + '</span>' : '') + envNote + '</div>' +
           '</div>' +
           '<input class="price-input" type="number" min="0" step="0.01" placeholder="¥' + p.formulaPrice + '"' +
             (custom ? ' value="' + p.overridePrice + '"' : '') +
@@ -440,6 +505,27 @@
         '</div>';
       }).join('');
     }
+
+    // 生成环境变量配置：把当前所有自定义价格拼成 PRICE_OVERRIDES JSON，一键复制
+    document.getElementById('copyPriceEnv').addEventListener('click', function () {
+      var obj = {};
+      priceProducts.forEach(function (p) {
+        if (p.overridePrice !== null && p.overridePrice !== undefined) obj[p.id] = Number(p.overridePrice);
+      });
+      var keys = Object.keys(obj);
+      if (!keys.length) {
+        Jay.toast('当前没有自定义价格，先给商品设置固定价', true);
+        return;
+      }
+      var json = JSON.stringify(obj);
+      Jay.copyText(json).then(function (ok) {
+        if (ok) {
+          Jay.toast('已复制 ' + keys.length + ' 个商品的价格配置，去 Render 粘贴到 PRICE_OVERRIDES');
+        } else {
+          Jay.toast('复制失败', true);
+        }
+      });
+    });
 
     // 定价列表事件委托：保存 / 恢复公式价
     document.getElementById('priceList').addEventListener('click', async function (e) {
@@ -566,6 +652,37 @@
     document.getElementById('pwd').addEventListener('input', function () {
       this.parentElement.classList.remove('invalid');
     });
+    // 导出订单为 CSV（推送/重建前先导出留底；免费版数据库重建后会清空）
+    function exportOrders() {
+      if (!currentOrders.length) {
+        Jay.toast('没有可导出的订单', true);
+        return;
+      }
+      function cell(v) {
+        v = v === null || v === undefined ? '' : String(v);
+        return '"' + v.replace(/"/g, '""') + '"';
+      }
+      var headers = ['订单号', '商品', '数量', '单价(¥)', '总价(¥)', '成本(U)',
+        '付款方式', '付款状态', '订单状态', '客户邮箱', '下单时间', '发货卡密', '备注'];
+      var lines = [headers.map(cell).join(',')];
+      currentOrders.forEach(function (o) {
+        lines.push([
+          o.orderId, o.productName, o.quantity, o.unitPrice, o.totalPrice,
+          o.totalCostUsdt, o.payMethod, o.payState, o.status,
+          o.email, o.createdAt, o.deliveredKey, o.payNote,
+        ].map(cell).join(','));
+      });
+      var blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'jayshop-orders-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      Jay.toast('已导出 ' + currentOrders.length + ' 笔订单');
+    }
+    document.getElementById('exportBtn').addEventListener('click', exportOrders);
+
     document.getElementById('refreshBtn').addEventListener('click', function () {
       var active = document.querySelector('#adminTabs .admin-tab.active');
       var name = active ? active.getAttribute('data-tab') : 'orders';

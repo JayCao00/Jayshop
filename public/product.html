@@ -92,6 +92,17 @@
           </div>
         </div>
       </form>
+
+      <!-- 发货说明 -->
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin:0 0 10px;font-size:15px">📦 发货说明</h3>
+        <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--text-2);line-height:1.9">
+          <li>店主手动发货，提交付款凭证后尽快确认（通常几小时内）</li>
+          <li><strong style="color:var(--err,#c00)">必须上传付款截图，否则无法发货</strong></li>
+          <li>发货后凭订单号在「查订单」页面查看卡密</li>
+          <li>遇到问题点右下角「联系店主」，附上订单号更快解决</li>
+        </ul>
+      </div>
     </div>
   </main>
 
@@ -113,6 +124,7 @@
     var buybarEl = document.getElementById('buybar');
     var product = null;
     var qty = 1;
+    var maxQty = 99; // 购买上限：有库存数据时不超过剩余库存
     var submitting = false;
 
     var qtyVal = document.getElementById('qtyVal');
@@ -133,7 +145,7 @@
       qtyVal.textContent = qty;
       totalEl.textContent = Jay.fmtMoney(Number(product.price) * qty);
       document.getElementById('qtyMinus').disabled = qty <= 1;
-      document.getElementById('qtyPlus').disabled = qty >= 99;
+      document.getElementById('qtyPlus').disabled = qty >= maxQty;
     }
 
     function validEmail(v) {
@@ -200,9 +212,21 @@
       document.getElementById('dName').textContent = p.name || '未命名商品';
 
       var inStock = p.inStock !== false;
-      document.getElementById('dStock').innerHTML = inStock
-        ? '<span class="stock ok"><span class="dot"></span>有货，可立即购买</span>'
-        : '<span class="stock soldout"><span class="dot"></span>已售罄，暂时无法购买</span>';
+      var stockNum = (typeof p.stock === 'number' && isFinite(p.stock)) ? Math.floor(p.stock) : null;
+      var stockHtml;
+      if (!inStock) {
+        stockHtml = '<span class="stock soldout"><span class="dot"></span>已售罄，暂时无法购买</span>';
+      } else if (stockNum !== null && stockNum > 0) {
+        stockHtml = stockNum < 10
+          ? '<span class="stock ok"><span class="dot"></span>有货 · <strong style="color:var(--err,#c00)">仅剩 ' + stockNum + ' 件</strong></span>'
+          : '<span class="stock ok"><span class="dot"></span>有货 · 库存 ' + stockNum + ' 件</span>';
+      } else {
+        stockHtml = '<span class="stock ok"><span class="dot"></span>有货，可立即购买</span>';
+      }
+      document.getElementById('dStock').innerHTML = stockHtml;
+      // 购买数量上限：不超过剩余库存（无库存数据时保持 99）
+      maxQty = stockNum !== null && stockNum > 0 ? Math.min(99, stockNum) : 99;
+      if (qty > maxQty) qty = maxQty;
 
       document.getElementById('dPrice').textContent = Jay.fmtMoney(p.price);
       document.getElementById('dDelivery').textContent = p.delivery || '下单后由店主发货';
@@ -251,7 +275,7 @@
       if (qty > 1) { qty--; updateTotal(); }
     });
     document.getElementById('qtyPlus').addEventListener('click', function () {
-      if (qty < 99) { qty++; updateTotal(); }
+      if (qty < maxQty) { qty++; updateTotal(); }
     });
     emailInput.addEventListener('input', function () {
       emailField.classList.remove('invalid');

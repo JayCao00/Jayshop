@@ -176,6 +176,107 @@
     );
   }
 
+  /* ============ 联系店主悬浮窗 ============
+     从 /api/config 读取环境变量配置的 QQ / Telegram。
+     两个都没配置时不显示按钮；后台页面（admin.html）不注入。 */
+  (function initContactWidget() {
+    if (/admin\.html$/.test(location.pathname)) return;
+    var fab = document.createElement('button');
+    fab.id = 'contactFab';
+    fab.className = 'contact-fab';
+    fab.style.display = 'none';
+    fab.textContent = '💬 联系店主';
+    var modal = document.createElement('div');
+    modal.id = 'contactModal';
+    modal.className = 'modal';
+    modal.style.display = 'none';
+    modal.innerHTML =
+      '<div class="modal-inner contact-modal">' +
+        '<div class="modal-head"><span>联系店主</span>' +
+        '<button class="link-btn" id="contactClose">✕ 关闭</button></div>' +
+        '<div id="contactBody"></div>' +
+      '</div>';
+    document.body.appendChild(fab);
+    document.body.appendChild(modal);
+    function openModal() { modal.style.display = 'flex'; }
+    function closeModal() { modal.style.display = 'none'; }
+    fab.addEventListener('click', openModal);
+    modal.querySelector('#contactClose').addEventListener('click', closeModal);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
+
+    api('/api/config').then(function (r) {
+      if (!r.ok || !r.data) return;
+
+      // ---- 店铺公告横幅（顶栏下方，可关闭；换新公告后重新出现） ----
+      (function showAnnouncement(text) {
+        if (!text) return;
+        var dismissed = null;
+        try { dismissed = localStorage.getItem('jayshop_ann_dismissed'); } catch (e) { /* 忽略 */ }
+        if (dismissed === text) return;
+        var bar = document.createElement('div');
+        bar.className = 'announce-bar';
+        var txt = document.createElement('span');
+        txt.className = 'announce-text';
+        txt.textContent = '📢 ' + text;
+        var close = document.createElement('button');
+        close.className = 'announce-close';
+        close.setAttribute('aria-label', '关闭公告');
+        close.textContent = '✕';
+        close.addEventListener('click', function () {
+          try { localStorage.setItem('jayshop_ann_dismissed', text); } catch (e) { /* 忽略 */ }
+          bar.remove();
+        });
+        bar.appendChild(txt);
+        bar.appendChild(close);
+        var topbar = document.querySelector('.topbar');
+        if (topbar && topbar.parentNode) topbar.parentNode.insertBefore(bar, topbar.nextSibling);
+        else document.body.insertBefore(bar, document.body.firstChild);
+      })(r.data.announcement);
+
+      var c = r.data.contact;
+      if (!c) return;
+      var rows = '';
+      if (c.qq) {
+        rows +=
+          '<div class="contact-row">' +
+            '<div><div class="contact-label">QQ</div>' +
+            '<div class="contact-value">' + esc(c.qq) + '</div></div>' +
+            '<div class="contact-actions">' +
+              '<button class="btn small ghost" data-copy="' + esc(c.qq) + '">复制</button>' +
+              '<a class="btn small" target="_blank" rel="noopener" href="https://wpa.qq.com/msgrd?v=3&uin=' +
+                encodeURIComponent(c.qq) + '&site=qq&menu=yes">加好友</a>' +
+            '</div>' +
+          '</div>';
+      }
+      if (c.telegram) {
+        var tg = String(c.telegram).replace(/^@/, '');
+        rows +=
+          '<div class="contact-row">' +
+            '<div><div class="contact-label">Telegram</div>' +
+            '<div class="contact-value">@' + esc(tg) + '</div></div>' +
+            '<div class="contact-actions">' +
+              '<a class="btn small" target="_blank" rel="noopener" href="https://t.me/' +
+                encodeURIComponent(tg) + '">去 Telegram</a>' +
+            '</div>' +
+          '</div>';
+      }
+      if (!rows) return; // 都没配置就不显示按钮
+      document.getElementById('contactBody').innerHTML = rows +
+        '<p class="contact-tip">下单遇到问题？直接联系店主，附上订单号更快解决。</p>';
+      fab.style.display = '';
+      var copyBtns = modal.querySelectorAll('[data-copy]');
+      for (var i = 0; i < copyBtns.length; i++) {
+        (function (b) {
+          b.addEventListener('click', function () {
+            copyText(b.getAttribute('data-copy')).then(function (ok) {
+              toast(ok ? '已复制' : '复制失败，请手动复制', !ok);
+            });
+          });
+        })(copyBtns[i]);
+      }
+    });
+  })();
+
   // 暴露给各页面
   window.Jay = {
     api: api,

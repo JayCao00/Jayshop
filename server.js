@@ -52,6 +52,11 @@ const ALIPAY_QR_URL = (process.env.ALIPAY_QR_URL || '').trim();
 // 币安内部转账 UID（USDT 付款用）：客户通过币安 App 内"UID 转账"付款到此 UID。
 // 在 Render 环境变量 BINANCE_UID 中设置；未设置时 USDT 付款页会提示联系店主。
 const BINANCE_UID = (process.env.BINANCE_UID || '').trim();
+// 店主联系方式：前台"联系店主"悬浮窗展示；QQ 填纯数字，Telegram 填用户名（可带 @，会自动去掉）
+const CONTACT_QQ = (process.env.CONTACT_QQ || '').trim();
+const CONTACT_TELEGRAM = (process.env.CONTACT_TELEGRAM || '').trim().replace(/^@/, '');
+// 店铺公告：前台顶部横幅展示；优先用后台设置的值，未设置过则用环境变量 ANNOUNCEMENT
+const ANNOUNCEMENT_ENV = (process.env.ANNOUNCEMENT || '').trim().slice(0, 200);
 // 热门商品（首页"🔥热门"分类）：逗号分隔的商品 id。默认含 Gemini Pro、
 // Duolingo、Apple TV、Muse AI 四款，店主可在 Render 环境变量 FEATURED_IDS
 // 中覆盖为自己的 id 列表（逗号分隔）。
@@ -164,6 +169,38 @@ const stmts = {
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value, updated_at = excluded.updated_at`),
 };
+
+/** 环境变量价格底稿：PRICE_OVERRIDES 为 JSON 字符串，如 {"商品id": 29.9}。
+    重建后自动恢复这些价格；后台修改立即生效，但重建后会恢复为这里的值
+    （除非同步更新环境变量）。解析失败则忽略。 */
+function getEnvPriceOverrides() {
+  const out = {};
+  try {
+    const raw = (process.env.PRICE_OVERRIDES || '').trim();
+    if (!raw) return out;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object') return out;
+    for (const k of Object.keys(obj)) {
+      const n = Number(obj[k]);
+      if (k && Number.isFinite(n) && n > 0) out[k] = Math.round(n * 100) / 100;
+    }
+  } catch {
+    /* 忽略，返回空 */
+  }
+  return out;
+}
+const ENV_PRICED_IDS = new Set(Object.keys(getEnvPriceOverrides()));
+// 启动时用环境变量底稿恢复自定义价格（REPLACE：重建后以环境变量为准）
+try {
+  if (ENV_PRICED_IDS.size > 0) {
+    const envPrices = getEnvPriceOverrides();
+    const now = new Date().toISOString(); // 注意：nowIso() 在下方才定义，此处直接取值
+    for (const pid of ENV_PRICED_IDS) stmts.setOverride.run(pid, envPrices[pid], now);
+    console.log(`[jayshop] 已从 PRICE_OVERRIDES 恢复 ${ENV_PRICED_IDS.size} 个自定义价格`);
+  }
+} catch (e) {
+  console.error('[jayshop] 恢复环境变量价格失败:', e.message);
+}
 
 /** 币安 UID：优先用后台设置的值，未设置过则用环境变量 BINANCE_UID */
 function getBinanceUid() {
@@ -464,6 +501,26 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, demoMode: DEMO });
 });
 
+// 公开配置：店主联系方式 + 店铺公告
+// （环境变量 CONTACT_QQ / CONTACT_TELEGRAM / ANNOUNCEMENT 配置；都没配则前台不显示对应元素）
+app.get('/api/config', (req, res) => {
+  let announcement = '';
+  try {
+    const row = stmts.getSetting.get('announcement');
+    if (row && row.value && String(row.value).trim()) announcement = String(row.value).trim().slice(0, 200);
+  } catch {
+    /* 忽略 */
+  }
+  if (!announcement) announcement = ANNOUNCEMENT_ENV;
+  res.json({
+    contact: {
+      qq: CONTACT_QQ,
+      telegram: CONTACT_TELEGRAM,
+    },
+    announcement,
+  });
+});
+
 app.get('/api/products', async (req, res) => {
   try {
     const products = await getCatalog();
@@ -572,6 +629,10 @@ app.post('/api/orders/:id/mark-paid', payLimiter, withUpload(shotUpload, 'screen
   if ((o.pay_state || 'unpaid') !== 'unpaid') {
     cleanup();
     return res.status(409).json({ error: '该订单已标记过付款，请等待店主确认' });
+  }
+  // 付款截图必填：无截图不允许标记付款
+  if (!req.file) {
+    return res.status(400).json({ error: '请上传付款截图后再提交' });
   }
 
   const note = typeof req.body.note === 'string' ? req.body.note.trim().slice(0, 200) : '';
@@ -747,6 +808,7 @@ app.get('/api/admin/products', requireAdmin, async (req, res) => {
       const pub = toPublicProduct(raw, publicOpts(costInUsdt, markup));
       const cost = costInUsdt && raw.price != null ? Number(raw.price) : NaN;
       const override = overrides[pub.id];
+      const envPrice = ENV_PRICED_IDS.has(pub.id) ? getEnvPriceOverrides()[pub.id] : null;
       return {
         id: pub.id,
         name: pub.name,
@@ -755,6 +817,8 @@ app.get('/api/admin/products', requireAdmin, async (req, res) => {
         formulaPrice: pub.price,
         overridePrice: override !== undefined ? override : null,
         finalPrice: override !== undefined ? override : pub.price,
+        fromEnv: ENV_PRICED_IDS.has(pub.id), // 环境变量中有底稿价（重建后以它为准）
+        envPrice, // 环境变量中的底稿价（无则为 null）
       };
     });
     res.json({ products, markupPct: MARKUP_PCT, rate: USDT_CNY_RATE });
@@ -788,27 +852,39 @@ app.post('/api/admin/products/:id/price', requireAdmin, async (req, res) => {
   res.json({ ok: true, productId: pid, price: fixed });
 });
 
-// 通用设置查询（目前：币安 UID）
+// 通用设置查询（目前：币安 UID、店铺公告）
 app.get('/api/admin/settings', requireAdmin, (req, res) => {
   let binanceUid = '';
+  let announcement = '';
   try {
-    const row = stmts.getSetting.get('binance_uid');
-    if (row && row.value) binanceUid = String(row.value);
+    const r1 = stmts.getSetting.get('binance_uid');
+    if (r1 && r1.value) binanceUid = String(r1.value);
+    const r2 = stmts.getSetting.get('announcement');
+    if (r2 && r2.value) announcement = String(r2.value);
   } catch {
     /* 忽略 */
   }
-  res.json({ binanceUid, binanceUidEnv: BINANCE_UID || '' });
+  res.json({ binanceUid, binanceUidEnv: BINANCE_UID || '', announcement, announcementEnv: ANNOUNCEMENT_ENV });
 });
 
-// 通用设置保存：币安 UID（空字符串 = 清除，恢复用环境变量的值）
+// 通用设置保存：币安 UID、店铺公告（空字符串 = 清除，恢复用环境变量的值）
 app.post('/api/admin/settings', requireAdmin, (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const uid = typeof body.binanceUid === 'string' ? body.binanceUid.trim().slice(0, 64) : '';
-  if (uid && !/^[0-9]{5,20}$/.test(uid)) {
-    return res.status(400).json({ error: '币安 UID 应为 5~20 位数字' });
+  const out = {};
+  if (body.binanceUid !== undefined) {
+    const uid = typeof body.binanceUid === 'string' ? body.binanceUid.trim().slice(0, 64) : '';
+    if (uid && !/^[0-9]{5,20}$/.test(uid)) {
+      return res.status(400).json({ error: '币安 UID 应为 5~20 位数字' });
+    }
+    stmts.setSetting.run('binance_uid', uid, nowIso());
+    out.binanceUid = uid;
   }
-  stmts.setSetting.run('binance_uid', uid, nowIso());
-  res.json({ ok: true, binanceUid: uid });
+  if (body.announcement !== undefined) {
+    const ann = typeof body.announcement === 'string' ? body.announcement.trim().slice(0, 200) : '';
+    stmts.setSetting.run('announcement', ann, nowIso());
+    out.announcement = ann;
+  }
+  res.json(Object.assign({ ok: true }, out));
 });
 
 // ---------------- 静态托管与兜底 ----------------

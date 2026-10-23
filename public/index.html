@@ -10,12 +10,20 @@
 <body>
 
   <header class="topbar">
-    <div class="topbar-inner">
-      <div class="logo">J</div>
-      <div>
-        <div class="brand-name">Jayshop</div>
-        <div class="brand-sub">精选好货 · 自动发货</div>
+    <div class="topbar-inner nav-inner">
+      <a class="home-link" href="index.html" style="flex:none">
+        <div class="logo">J</div>
+        <div>
+          <div class="brand-name">Jayshop</div>
+          <div class="brand-sub">精选好货 · 自动发货</div>
+        </div>
+      </a>
+      <div class="nav-search">
+        <span class="nav-search-icon">🔍</span>
+        <input id="searchInput" type="search" placeholder="搜索商品…" autocomplete="off" aria-label="搜索商品">
+        <button id="searchClear" class="nav-search-clear" style="display:none" aria-label="清除搜索">✕</button>
       </div>
+      <a class="nav-link" href="order.html">📋 查订单</a>
     </div>
   </header>
 
@@ -42,6 +50,29 @@
     <div id="state" style="display:none"></div>
   </main>
 
+  <!-- 购买指南 -->
+  <section class="guide">
+    <h2>购买指南</h2>
+    <p class="guide-sub">清晰选择 · 自助选购 · 订单可查</p>
+    <div class="guide-steps">
+      <div class="guide-step">
+        <div class="guide-num">01</div>
+        <h3>选择商品</h3>
+        <p>浏览分类或搜索，找到需要的商品下单，记下订单号。</p>
+      </div>
+      <div class="guide-step">
+        <div class="guide-num">02</div>
+        <h3>付款并提交凭证</h3>
+        <p>按订单金额付款（支付宝扫码 / 币安 UID 转账），<strong>必须上传付款截图并提交</strong>，否则无法发货。</p>
+      </div>
+      <div class="guide-step">
+        <div class="guide-num">03</div>
+        <h3>等待发货</h3>
+        <p>店主核对到账后发货，凭订单号在「查订单」页面查看卡密。</p>
+      </div>
+    </div>
+  </section>
+
   <footer class="footer">
     <div>Jayshop · 下单后请联系店主确认发货</div>
   </footer>
@@ -55,6 +86,8 @@
     var state = document.getElementById('state');
     var banner = document.getElementById('demoBanner');
     var tabsEl = document.getElementById('tabs');
+    var searchInput = document.getElementById('searchInput');
+    var searchClear = document.getElementById('searchClear');
 
     // 分类标签（key 与后端 getCategory 一致；featured 为热门，由后端标记）
     var CATS = {
@@ -64,12 +97,20 @@
     var TAB_ORDER = ['all', 'featured', 'ai', 'media', 'office', 'edu', 'network', 'account', 'other'];
     var allProducts = [];
     var curTab = 'all';
+    var keyword = '';
 
     function matchTab(p) {
       if (curTab === 'all') return true;
       if (curTab === 'featured') return !!p.featured;
       return p.category === curTab;
     }
+
+    function matchSearch(p) {
+      if (!keyword) return true;
+      return (p.name || '').toLowerCase().indexOf(keyword) !== -1;
+    }
+
+    function matchAll(p) { return matchTab(p) && matchSearch(p); }
 
     function renderTabs() {
       var counts = { all: allProducts.length, featured: 0 };
@@ -100,10 +141,12 @@
       skeleton.style.display = 'none';
       state.style.display = 'none';
       grid.style.display = 'grid';
-      var list = allProducts.filter(matchTab);
+      var list = allProducts.filter(matchAll);
       if (!list.length) {
         grid.style.display = 'none';
-        showState(Jay.emptyStateHTML('该分类暂无商品', '换个分类看看～'));
+        showState(keyword
+          ? Jay.emptyStateHTML('没有找到 "' + keyword + '"', '换个关键词试试～')
+          : Jay.emptyStateHTML('该分类暂无商品', '换个分类看看～'));
         // 空态时保留标签页可见，方便切换
         tabsEl.style.display = 'flex';
         return;
@@ -152,6 +195,19 @@
       curTab = b.getAttribute('data-tab');
       renderTabs();
       render();
+    });
+
+    // 搜索：实时过滤商品名称（与分类叠加）
+    function applySearch() {
+      keyword = searchInput.value.trim().toLowerCase();
+      searchClear.style.display = keyword ? '' : 'none';
+      render();
+    }
+    searchInput.addEventListener('input', applySearch);
+    searchClear.addEventListener('click', function () {
+      searchInput.value = '';
+      applySearch();
+      searchInput.focus();
     });
 
     load();

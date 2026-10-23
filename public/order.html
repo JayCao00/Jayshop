@@ -191,7 +191,29 @@
     });
 
     if (!id) {
-      showState(Jay.notFoundHTML('缺少订单号', '请从商品页下单后再查看订单状态。', 'index.html'));
+      // 查单页：输入订单号跳转到详情
+      stateEl.style.display = 'block';
+      stateEl.innerHTML =
+        '<div class="state">' +
+          '<div class="emoji">📋</div>' +
+          '<h2>查询订单</h2>' +
+          '<p>输入下单时获得的订单号，查看付款状态与卡密。</p>' +
+          '<div style="display:flex;gap:8px;max-width:360px;margin:0 auto">' +
+            '<input id="qOrderId" type="text" placeholder="粘贴订单号" autocomplete="off"' +
+              ' style="flex:1;min-width:0;padding:12px 14px;border:1px solid var(--line,#ddd);border-radius:10px;font-size:15px">' +
+            '<button id="qOrderBtn" class="btn small" style="width:auto;padding:12px 20px">查询</button>' +
+          '</div>' +
+          '<div style="margin-top:16px"><a href="index.html" style="font-size:14px;color:var(--text-2)">← 返回首页</a></div>' +
+        '</div>';
+      function doQuery() {
+        var v = document.getElementById('qOrderId').value.trim();
+        if (!v) { Jay.toast('请输入订单号', true); return; }
+        location.href = 'order.html?id=' + encodeURIComponent(v);
+      }
+      document.getElementById('qOrderBtn').addEventListener('click', doQuery);
+      document.getElementById('qOrderId').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') doQuery();
+      });
     } else {
       fetchOrder();
       startPoll();

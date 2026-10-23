@@ -80,10 +80,10 @@
           <input type="text" id="note" maxlength="200" placeholder="例如：你的付款账号昵称">
         </div>
         <div class="field" style="margin-bottom:0">
-          <label>付款截图 <span style="color:var(--text-3);font-weight:400">（选填）</span></label>
+          <label>付款截图 <span style="color:var(--err)">*</span></label>
           <input type="file" id="shot" accept="image/png,image/jpeg,image/gif,image/webp" class="file-input">
-          <div class="hint">上传付款成功截图，店主核对更快（仅支持图片，最大 5MB）</div>
-          <div class="error-msg" id="shotErr">请选择图片文件（PNG / JPG / GIF / WebP，且不超过 5MB）</div>
+          <div class="hint">必须上传付款成功截图，店主核对后才会发货（仅支持图片，最大 5MB）</div>
+          <div class="error-msg" id="shotErr">请上传付款截图（PNG / JPG / GIF / WebP，且不超过 5MB）</div>
         </div>
       </div>
 
@@ -125,7 +125,7 @@
     });
 
     function validShot(file) {
-      if (!file) return true;
+      if (!file) return false; // 付款截图必填
       var okType = /^(image\/png|image\/jpeg|image\/gif|image\/webp)$/.test(file.type);
       return okType && file.size <= 5 * 1024 * 1024;
     }
@@ -137,7 +137,7 @@
       if (!validShot(shot)) {
         shotField.closest('.field').classList.add('invalid');
         document.getElementById('shotErr').style.display = 'block';
-        Jay.toast('截图需为图片且不超过 5MB', true);
+        Jay.toast(shot ? '截图需为图片且不超过 5MB' : '请先上传付款截图', true);
         return;
       }
       shotField.closest('.field').classList.remove('invalid');
