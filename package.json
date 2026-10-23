@@ -1,1 +1,0 @@
-{"dependencies":{"better-sqlite3":"^11.10.0","cookie-parser":"^1.4.6","express":"^4.21.2","express-rate-limit":"^7.4.1","helmet":"^8.0.0","multer":"^2.5.0"},"description":"Jayshop 商城后端：Express + SQLite，代理 ProdSeller 供应商 API","engines":{"node":">=18"},"license":"MIT","main":"server.js","name":"jayshop-backend","scripts":{"start":"node server.js"},"version":"1.0.0"}
