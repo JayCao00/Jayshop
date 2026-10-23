@@ -74,6 +74,16 @@
         </div>
       </div>
 
+      <!-- 商品定价 -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin:0 0 8px;font-size:15px">🏷️ 商品定价</h3>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
+          可为单个商品设置固定售价（人民币）。不填则按公式自动计价（成本 ×（1+<span id="markupLabel">0.30</span>）× 汇率）。
+          <span style="color:var(--warn,#b45309)">自定义价格保存在服务器数据库中，服务重建后会丢失，调完价记得截图留底。</span>
+        </p>
+        <div id="priceList"><p style="font-size:13px;color:var(--text-2)">定价数据加载中…</p></div>
+      </div>
+
       <div id="loading" class="state" style="padding:32px">
         <div class="spinner"></div>
         <p>订单加载中…</p>
@@ -309,6 +319,67 @@
       }
     }
 
+    // 商品定价：列表 + 自定义售价
+    async function loadPrices() {
+      var box = document.getElementById('priceList');
+      var r = await Jay.adminApi('/api/admin/products', pwd);
+      if (!r.ok || !r.data) {
+        box.innerHTML = '<p style="font-size:13px;color:var(--err)">定价数据加载失败，请刷新重试。</p>';
+        return;
+      }
+      var mk = document.getElementById('markupLabel');
+      if (mk && r.data.markupPct != null) mk.textContent = r.data.markupPct;
+      var items = r.data.products || [];
+      if (!items.length) {
+        box.innerHTML = '<p style="font-size:13px;color:var(--text-2)">暂无商品</p>';
+        return;
+      }
+      box.innerHTML = items.map(function (p) {
+        var custom = p.overridePrice !== null && p.overridePrice !== undefined;
+        return '<div class="price-row" data-id="' + Jay.esc(p.id) + '" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line,#eee)">' +
+          '<div style="flex:1;min-width:140px">' +
+            '<div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + Jay.esc(p.name) + '">' + Jay.esc(p.name) + (p.inStock ? '' : ' <span style="color:var(--err)">(售罄)</span>') + '</div>' +
+            '<div style="font-size:12px;color:var(--text-2)">成本 ' + (p.costUsdt !== null ? Jay.esc(p.costUsdt) + 'U' : '--') +
+              ' · 公式价 ' + Jay.fmtMoney(p.formulaPrice) +
+              (custom ? ' · <span style="color:var(--warn,#b45309)">自定义价 ' + Jay.fmtMoney(p.overridePrice) + '</span>' : '') + '</div>' +
+          '</div>' +
+          '<input class="price-input" type="number" min="0" step="0.01" placeholder="¥' + p.formulaPrice + '"' +
+            (custom ? ' value="' + p.overridePrice + '"' : '') +
+            ' style="width:110px;padding:8px 10px;border:1px solid var(--line,#ddd);border-radius:8px;font-size:14px">' +
+          '<button class="btn small price-save" style="width:auto;padding:8px 14px">保存</button>' +
+          (custom ? '<button class="btn ghost small price-reset" style="width:auto;padding:8px 14px">恢复公式价</button>' : '') +
+        '</div>';
+      }).join('');
+    }
+
+    // 定价列表事件委托：保存 / 恢复公式价
+    document.getElementById('priceList').addEventListener('click', async function (e) {
+      var btn = e.target.closest('.price-save, .price-reset');
+      if (!btn) return;
+      var row = btn.closest('.price-row');
+      if (!row) return;
+      var id = row.getAttribute('data-id');
+      var input = row.querySelector('.price-input');
+      var isReset = btn.classList.contains('price-reset');
+      var price = isReset ? null : (input ? input.value.trim() : '');
+      if (!isReset && (price === '' || isNaN(Number(price)) || Number(price) <= 0)) {
+        Jay.toast('请输入大于 0 的价格，留空则不修改', true);
+        return;
+      }
+      btn.disabled = true;
+      var r = await Jay.adminApi('/api/admin/products/' + encodeURIComponent(id) + '/price', pwd, {
+        method: 'POST',
+        body: { price: isReset ? null : Number(price) },
+      });
+      btn.disabled = false;
+      if (!r.ok) {
+        Jay.toast('保存失败：' + ((r.data && r.data.error) || r.status), true);
+        return;
+      }
+      Jay.toast(isReset ? '已恢复公式价' : '售价已更新为 ' + Jay.fmtMoney(r.data.price));
+      loadPrices();
+    });
+
     // 收款码预览与上传
     var qrPreview = document.getElementById('qrPreview');
     var qrEmpty = document.getElementById('qrEmpty');
@@ -383,6 +454,7 @@
         adminView.style.display = 'block';
         loadOrders();
         loadBalance();
+        loadPrices();
         refreshQrPreview();
       } else {
         errEl.parentElement.classList.add('invalid');
@@ -419,6 +491,7 @@
       adminView.style.display = 'block';
       loadOrders();
       loadBalance();
+      loadPrices();
       refreshQrPreview();
     }
   })();

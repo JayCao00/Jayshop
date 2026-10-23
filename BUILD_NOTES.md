@@ -77,12 +77,27 @@
 9. **上线后第一件事**：在管理后台"支付宝收款码"卡片上传你的支付宝个人收款码（否则客户付款页无码可扫）
 10. 去 ProdSeller 充值余额（否则真实下单报 402；网站本身不受影响）
 
+## 5b. 2026-10-23 部署修复（Render Docker 构建失败）
+
+- 现象：`RUN npm install --omit=dev` exit 1。根因：better-sqlite3@13 安装时从源码编译（node-gyp），而 `node:20-slim` 缺 python3/make/g++ 工具链。
+- 修复：Dockerfile 在 npm install 之前加装工具链（`apt-get install -y python3 make g++`）。用户侧只需更新仓库里的 Dockerfile 后重新 push，Render 自动重建。
+- **后续（同日 14:2x）**：首页商品列表一直显示灰色骨架屏。根因：helmet 默认 CSP（`script-src 'self'` 无 `'unsafe-inline'`）拦截了所有页面行内 `<script>`，导致页面逻辑从未执行；且 `img-src 'self' data:` 会拦外部商品图。修复：server.js 中配置 helmet CSP，放开 `script-src 'unsafe-inline'`、`script-src-attr 'unsafe-inline'`、`img-src https:`，其余保持默认。用户侧需更新 server.js 后重推。
+- **后续（同日 14:0x）**：构建通过但运行时 `Segmentation fault (exit 139)`——v13 在 slim 镜像里现场编译出的 binding 加载即崩。改用 better-sqlite3@11.10.0（有 Node 20 linux-x64 官方预编译包，无需编译，API 与现有代码完全兼容）。package.json + package-lock.json 已同步，用户侧只需改 package.json 里版本号后重推。
+
 ## 5. 已知限制与后续建议
 
 - **Render 免费版 15 分钟无流量会休眠**（唤醒约 1 分钟）；**无持久磁盘**，休眠/重部署后 SQLite 订单数据会丢失——缓解：新订单会经 Telegram 通知店主（配了 BOT_TOKEN 时），商品数据每次从 ProdSeller API 重拉不受影响
 - 长期建议：跑通后在 Porkbun 花 ~$10.5/年买个 `.com` 域名绑到 Render（免费版支持绑 2 个自定义域名）；订单量大了再考虑付费磁盘或外部 Postgres
 - `eu.org` 免费域名审批要数周，不指望
 - 轮询说明：`requiresEmailActivation` 的商品（如 Canva Pro 2 年版）供应商先返回 paid，后端每 30 秒轮询最多 20 分钟，delivered 后客户在订单页自动看到卡密
+
+## 5c. 2026-10-23 自定义售价功能（用户需求：偶尔大调一两次价格）
+
+- 新增 `price_overrides(product_id PK, price_cny, updated_at)` 表（lib/db.js）。
+- server.js：`priceOverrideMap()` + `applyPriceOverride()`；`getCatalog()`、`getProduct()`、下单接口统一应用自定义价（有则覆盖，无则走公式）。
+- 新增管理接口：`GET /api/admin/products`（成本/公式价/自定义价/当前售价一览）、`POST /api/admin/products/:id/price`（设价；price 为空则清除恢复公式价）。
+- admin.html：新增"🏷️ 商品定价"卡片，逐行显示成本/公式价，输入框设固定价，"恢复公式价"按钮清除。
+- 限制：自定义价存 SQLite，重建丢失（已告知用户）。价格校验：>0 且 ≤9999999，保留 2 位小数。
 
 ## 6. 文件清单
 

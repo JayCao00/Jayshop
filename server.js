@@ -76,7 +76,6 @@ app.use(helmet({
     },
   },
 }));
-
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 
@@ -131,7 +130,39 @@ const stmts = {
   markPaid: db.prepare(`
     UPDATE orders SET pay_state = 'paid_claimed', pay_note = ?,
       screenshot_path = ?, updated_at = ? WHERE order_id = ?`),
+  // 自定义售价（人民币固定价）
+  getOverrides: db.prepare(`SELECT product_id, price_cny FROM price_overrides`),
+  setOverride: db.prepare(`
+    INSERT INTO price_overrides (product_id, price_cny, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(product_id) DO UPDATE SET
+      price_cny = excluded.price_cny, updated_at = excluded.updated_at`),
+  clearOverride: db.prepare(`DELETE FROM price_overrides WHERE product_id = ?`),
 };
+
+/** 读取全部自定义售价：{ productId: priceCny } */
+function priceOverrideMap() {
+  const m = {};
+  try {
+    for (const r of stmts.getOverrides.all()) {
+      const v = Number(r.price_cny);
+      if (Number.isFinite(v) && v > 0) m[r.product_id] = Math.round(v * 100) / 100;
+    }
+  } catch {
+    /* 表不存在等异常时视为无自定义价 */
+  }
+  return m;
+}
+
+/** 对外公开商品应用店主自定义价（有则覆盖 price，并标记 customPrice） */
+function applyPriceOverride(pub, overrides) {
+  const o = overrides && overrides[pub.id];
+  if (o !== undefined) {
+    pub.price = o;
+    pub.customPrice = true;
+  }
+  return pub;
+}
 
 // ---------------- 限流 ----------------
 const ordersLimiter = rateLimit({
@@ -245,12 +276,15 @@ function publicOpts(costInUsdt, markup) {
 }
 
 async function getCatalog() {
+  const overrides = priceOverrideMap();
   if (DEMO) {
     const src = demoCatalogSource();
-    return src.items.map((p) => toPublicProduct(p, publicOpts(src.costInUsdt, src.markup)));
+    return src.items.map((p) =>
+      applyPriceOverride(toPublicProduct(p, publicOpts(src.costInUsdt, src.markup)), overrides));
   }
   const list = await fetchCatalog();
-  return list.map((p) => toPublicProduct(p, publicOpts(true, MARKUP_PCT)));
+  return list.map((p) =>
+    applyPriceOverride(toPublicProduct(p, publicOpts(true, MARKUP_PCT)), overrides));
 }
 
 /** 返回 { raw, costInUsdt, costUsdt }：raw 为原始商品，costUsdt 为 USDT 成本（未知时为 null）。 */
@@ -278,7 +312,8 @@ async function getProduct(id) {
   const { raw, costInUsdt } = await getRawProduct(id);
   if (!raw) return null;
   const markup = DEMO ? (costInUsdt ? MARKUP_PCT : 0) : MARKUP_PCT;
-  return toPublicProduct(raw, publicOpts(costInUsdt, markup));
+  return applyPriceOverride(
+    toPublicProduct(raw, publicOpts(costInUsdt, markup)), priceOverrideMap());
 }
 
 function publicOrderRow(o) {
@@ -426,7 +461,8 @@ app.post('/api/orders', ordersLimiter, async (req, res) => {
   }
   if (!raw.raw) return res.status(404).json({ error: '商品不存在' });
   const markup = DEMO ? (raw.costInUsdt ? MARKUP_PCT : 0) : MARKUP_PCT;
-  const product = toPublicProduct(raw.raw, publicOpts(raw.costInUsdt, markup));
+  const product = applyPriceOverride(
+    toPublicProduct(raw.raw, publicOpts(raw.costInUsdt, markup)), priceOverrideMap());
   if (!product.inStock) return res.status(409).json({ error: '商品已售罄' });
   if (product.requiresEmailActivation && !EMAIL_RE.test(email)) {
     return res.status(400).json({ error: '该商品需要提供有效的邮箱地址' });
@@ -650,6 +686,63 @@ app.get('/api/admin/balance', requireAdmin, async (req, res) => {
   } catch {
     res.status(502).json({ error: '余额查询失败，请稍后重试' });
   }
+});
+
+// 商品定价管理：全部商品的成本 / 公式价 / 自定义价 / 当前售价
+app.get('/api/admin/products', requireAdmin, async (req, res) => {
+  try {
+    const overrides = priceOverrideMap();
+    let raws;
+    if (DEMO) {
+      const src = demoCatalogSource();
+      raws = src.items.map((p) => ({ raw: p, costInUsdt: src.costInUsdt, markup: src.markup }));
+    } else {
+      const list = await fetchCatalog();
+      raws = list.map((p) => ({ raw: p, costInUsdt: true, markup: MARKUP_PCT }));
+    }
+    const products = raws.map(({ raw, costInUsdt, markup }) => {
+      const pub = toPublicProduct(raw, publicOpts(costInUsdt, markup));
+      const cost = costInUsdt && raw.price != null ? Number(raw.price) : NaN;
+      const override = overrides[pub.id];
+      return {
+        id: pub.id,
+        name: pub.name,
+        inStock: pub.inStock,
+        costUsdt: Number.isFinite(cost) ? Math.round(cost * 100) / 100 : null,
+        formulaPrice: pub.price,
+        overridePrice: override !== undefined ? override : null,
+        finalPrice: override !== undefined ? override : pub.price,
+      };
+    });
+    res.json({ products, markupPct: MARKUP_PCT, rate: USDT_CNY_RATE });
+  } catch {
+    res.status(502).json({ error: '商品定价数据获取失败，请稍后重试' });
+  }
+});
+
+// 设置单个商品自定义售价（人民币固定价）；price 为空则清除，恢复公式价
+app.post('/api/admin/products/:id/price', requireAdmin, async (req, res) => {
+  const pid = String(req.params.id || '').slice(0, 100);
+  if (!pid) return res.status(400).json({ error: '缺少商品 id' });
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const rawPrice = body.price;
+  if (rawPrice === null || rawPrice === undefined || rawPrice === '') {
+    stmts.clearOverride.run(pid);
+    return res.json({ ok: true, cleared: true, productId: pid });
+  }
+  const price = Number(rawPrice);
+  if (!Number.isFinite(price) || price <= 0 || price > 9999999) {
+    return res.status(400).json({ error: '价格必须是大于 0 的数字（最高 9999999）' });
+  }
+  try {
+    const r = await getRawProduct(pid);
+    if (!r.raw) return res.status(404).json({ error: '商品不存在' });
+  } catch {
+    return res.status(502).json({ error: '商品校验失败，请稍后重试' });
+  }
+  const fixed = Math.round(price * 100) / 100;
+  stmts.setOverride.run(pid, fixed, nowIso());
+  res.json({ ok: true, productId: pid, price: fixed });
 });
 
 // ---------------- 静态托管与兜底 ----------------
