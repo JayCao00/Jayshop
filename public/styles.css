@@ -360,6 +360,17 @@ body {
   margin-bottom: 16px;
 }
 .admin-toolbar h2 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+.admin-tabs {
+  display: flex; gap: 8px; margin: 0 0 16px;
+}
+.admin-tab {
+  flex: 1; padding: 11px 8px; border: 1px solid var(--line, #e5e5e5);
+  background: #fff; border-radius: 10px; font-size: 14px; cursor: pointer;
+  white-space: nowrap; color: var(--text-1);
+}
+.admin-tab.active {
+  background: #111; color: #fff; border-color: #111; font-weight: 700;
+}
 .count-pill {
   background: var(--info-bg); color: var(--brand-1);
   font-size: 12px; font-weight: 600;

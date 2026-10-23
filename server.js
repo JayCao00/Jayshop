@@ -156,7 +156,25 @@ const stmts = {
     ON CONFLICT(product_id) DO UPDATE SET
       price_cny = excluded.price_cny, updated_at = excluded.updated_at`),
   clearOverride: db.prepare(`DELETE FROM price_overrides WHERE product_id = ?`),
+  // 通用设置
+  getSetting: db.prepare(`SELECT value FROM settings WHERE key = ?`),
+  setSetting: db.prepare(`
+    INSERT INTO settings (key, value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value, updated_at = excluded.updated_at`),
 };
+
+/** 币安 UID：优先用后台设置的值，未设置过则用环境变量 BINANCE_UID */
+function getBinanceUid() {
+  try {
+    const row = stmts.getSetting.get('binance_uid');
+    if (row && row.value && String(row.value).trim()) return String(row.value).trim();
+  } catch {
+    /* 忽略，转用环境变量 */
+  }
+  return BINANCE_UID;
+}
 
 /** 读取全部自定义售价：{ productId: priceCny } */
 function priceOverrideMap() {
@@ -346,7 +364,7 @@ function publicOrderRow(o) {
     usdtAmount: o.total_price != null && USDT_CNY_RATE > 0
       ? Math.round((Number(o.total_price) / USDT_CNY_RATE) * 100) / 100
       : null,
-    binanceUid: BINANCE_UID || '', // 币安内部转账 UID（USDT 付款用）
+    binanceUid: getBinanceUid(), // 币安内部转账 UID（USDT 付款用，后台可改）
     payMethod: o.pay_method || 'usdt',
     payState: o.pay_state || 'unpaid',
     createdAt: o.created_at,
@@ -768,6 +786,29 @@ app.post('/api/admin/products/:id/price', requireAdmin, async (req, res) => {
   const fixed = Math.round(price * 100) / 100;
   stmts.setOverride.run(pid, fixed, nowIso());
   res.json({ ok: true, productId: pid, price: fixed });
+});
+
+// 通用设置查询（目前：币安 UID）
+app.get('/api/admin/settings', requireAdmin, (req, res) => {
+  let binanceUid = '';
+  try {
+    const row = stmts.getSetting.get('binance_uid');
+    if (row && row.value) binanceUid = String(row.value);
+  } catch {
+    /* 忽略 */
+  }
+  res.json({ binanceUid, binanceUidEnv: BINANCE_UID || '' });
+});
+
+// 通用设置保存：币安 UID（空字符串 = 清除，恢复用环境变量的值）
+app.post('/api/admin/settings', requireAdmin, (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const uid = typeof body.binanceUid === 'string' ? body.binanceUid.trim().slice(0, 64) : '';
+  if (uid && !/^[0-9]{5,20}$/.test(uid)) {
+    return res.status(400).json({ error: '币安 UID 应为 5~20 位数字' });
+  }
+  stmts.setSetting.run('binance_uid', uid, nowIso());
+  res.json({ ok: true, binanceUid: uid });
 });
 
 // ---------------- 静态托管与兜底 ----------------

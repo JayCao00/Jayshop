@@ -109,6 +109,18 @@
 - 管理后台：未付款订单统一只允许取消、不可确认发货（支付宝/USDT 一致，防未收款发货）。
 - Telegram 付款通知文案区分币安/Alipay。
 
+## 5e. 2026-10-23 商品分类 + 热门（用户需求）
+
+- lib/prodseller.js：`CATEGORY_RULES` 关键词规则（ai/media/office/edu/network/account/other），`getCategory()`，`toPublicProduct` 输出增加 `category` 字段。
+- server.js：`FEATURED_IDS` 环境变量（默认 Gemini Pro/Duolingo/Apple TV/Muse AI 四个 id，可覆盖），`applyFeatured()` 给热门商品打 `featured: true` 标记（同时保留关键词分类）。
+- index.html：分类标签页（全部/🔥热门/🤖AI工具/🎬影视音乐/🛠️办公设计/🎓学习教育/🌐网络工具/📧账号邮箱/📦其他），带数量，点击过滤；styles.css 加 .tabs/.tab 样式。
+- .env.example 增加 FEATURED_IDS 说明。
+
+## 5f. 2026-10-23 库存显示 bug 修复（用户上报：列表有货、详情售罄）
+
+- 根因：ProdSeller 详情接口返回 `stock` 剩余数量（数字）而无 `inStock` 字段，`toPublicProduct` 只认 `inStock`，取不到即判售罄；41/54 个商品受影响。
+- 修复：新增 `resolveInStock()`——布尔型 inStock 优先，其次看 stock > 0，都没有默认有货（与列表页逻辑一致）。
+
 ## 6. 文件清单
 
 ```

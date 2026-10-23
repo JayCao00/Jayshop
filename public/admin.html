@@ -40,12 +40,20 @@
     <!-- 订单管理 -->
     <div id="adminView" style="display:none">
       <div class="admin-toolbar">
-        <h2>订单管理 <span class="count-pill" id="pendingCount"></span></h2>
+        <h2>管理后台 <span class="count-pill" id="pendingCount"></span></h2>
         <div>
           <button class="btn ghost small" id="refreshBtn">🔄 刷新</button>
           <button class="btn ghost small" id="logoutBtn">退出</button>
         </div>
       </div>
+      <nav class="admin-tabs" id="adminTabs">
+        <button class="admin-tab active" data-tab="orders">📦 订单</button>
+        <button class="admin-tab" data-tab="pricing">🏷️ 定价</button>
+        <button class="admin-tab" data-tab="payments">💰 收款</button>
+      </nav>
+
+      <!-- 订单 -->
+      <div id="tab-orders" class="admin-panel">
       <div class="card" style="margin-bottom:16px">
         <div class="meta-row">
           <span class="k">供应商余额</span>
@@ -54,6 +62,29 @@
         <div class="hint">余额为 USDT（供应商侧）；订单实付为人民币（¥），成本为 USDT，两者分开核算。</div>
       </div>
 
+      <div id="loading" class="state" style="padding:32px">
+        <div class="spinner"></div>
+        <p>订单加载中…</p>
+      </div>
+      <div id="list"></div>
+      <div id="listState" style="display:none"></div>
+      </div><!-- /tab-orders -->
+
+      <!-- 定价 -->
+      <div id="tab-pricing" class="admin-panel" style="display:none">
+      <!-- 商品定价 -->
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin:0 0 8px;font-size:15px">🏷️ 商品定价</h3>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
+          可为单个商品设置固定售价（人民币）。不填则按公式自动计价（成本 ×（1+<span id="markupLabel">0.30</span>）× 汇率）。
+          <span style="color:var(--warn,#b45309)">自定义价格保存在服务器数据库中，服务重建后会丢失，调完价记得截图留底。</span>
+        </p>
+        <div id="priceList"><p style="font-size:13px;color:var(--text-2)">定价数据加载中…</p></div>
+      </div>
+      </div><!-- /tab-pricing -->
+
+      <!-- 收款 -->
+      <div id="tab-payments" class="admin-panel" style="display:none">
       <!-- 收款码管理 -->
       <div class="card" style="margin-bottom:16px">
         <h3 style="margin:0 0 8px;font-size:15px">💙 支付宝收款码</h3>
@@ -74,22 +105,21 @@
         </div>
       </div>
 
-      <!-- 商品定价 -->
+      <!-- 币安 UID -->
       <div class="card" style="margin-bottom:16px">
-        <h3 style="margin:0 0 8px;font-size:15px">🏷️ 商品定价</h3>
+        <h3 style="margin:0 0 8px;font-size:15px">🟡 币安 UID <span style="font-weight:400;font-size:12px;color:var(--text-2)">（USDT 付款用）</span></h3>
         <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
-          可为单个商品设置固定售价（人民币）。不填则按公式自动计价（成本 ×（1+<span id="markupLabel">0.30</span>）× 汇率）。
-          <span style="color:var(--warn,#b45309)">自定义价格保存在服务器数据库中，服务重建后会丢失，调完价记得截图留底。</span>
+          客户用 USDT 付款时，付款页展示此 UID 进行币安内部转账。留空则使用环境变量 <code>BINANCE_UID</code> 的值。
+          <span style="color:var(--warn,#b45309)">存在数据库中，服务重建后会丢失，建议同时在 Render 环境变量里设置。</span>
         </p>
-        <div id="priceList"><p style="font-size:13px;color:var(--text-2)">定价数据加载中…</p></div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input id="binanceUidInput" type="text" inputmode="numeric" placeholder="例如：1288453319"
+            style="flex:1;min-width:180px;padding:10px 12px;border:1px solid var(--line,#ddd);border-radius:8px;font-size:15px;letter-spacing:0.04em">
+          <button class="btn small" id="binanceUidSave" style="width:auto;padding:10px 24px">保存</button>
+        </div>
+        <div id="binanceUidStatus" style="margin-top:8px;font-size:13px;color:var(--text-2)"></div>
       </div>
-
-      <div id="loading" class="state" style="padding:32px">
-        <div class="spinner"></div>
-        <p>订单加载中…</p>
-      </div>
-      <div id="list"></div>
-      <div id="listState" style="display:none"></div>
+      </div><!-- /tab-payments -->
     </div>
 
     <!-- 截图查看弹窗 -->
@@ -125,6 +155,35 @@
     var loadingEl = document.getElementById('loading');
     var listEl = document.getElementById('list');
     var listState = document.getElementById('listState');
+
+    // 后台标签页：订单 / 定价 / 收款（各面板数据懒加载，切换到才请求）
+    var loadedTabs = {};
+    function switchTab(name) {
+      var tabs = document.querySelectorAll('#adminTabs .admin-tab');
+      for (var i = 0; i < tabs.length; i++) {
+        tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
+      }
+      var panels = document.querySelectorAll('.admin-panel');
+      for (var j = 0; j < panels.length; j++) {
+        panels[j].style.display = panels[j].id === 'tab-' + name ? '' : 'none';
+      }
+      if (!loadedTabs[name]) {
+        loadedTabs[name] = true;
+        if (name === 'orders') { loadOrders(); loadBalance(); }
+        else if (name === 'pricing') { loadPrices(); }
+        else if (name === 'payments') { refreshQrPreview(); loadBinanceUid(); }
+      }
+    }
+    document.getElementById('adminTabs').addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('.admin-tab') : null;
+      if (b) switchTab(b.getAttribute('data-tab'));
+    });
+    function enterAdmin() {
+      loginView.style.display = 'none';
+      adminView.style.display = 'block';
+      loadedTabs = {};
+      switchTab('orders');
+    }
 
     var STATUS_LABEL = {
       pending: '待确认', confirmed: '已确认',
@@ -316,6 +375,39 @@
       }
     }
 
+    // 币安 UID 设置
+    async function loadBinanceUid() {
+      var st = document.getElementById('binanceUidStatus');
+      var r = await Jay.adminApi('/api/admin/settings', pwd);
+      if (!r.ok || !r.data) {
+        st.textContent = '读取失败，请刷新重试';
+        return;
+      }
+      document.getElementById('binanceUidInput').value = r.data.binanceUid || '';
+      st.textContent = r.data.binanceUid
+        ? '当前生效：' + r.data.binanceUid + '（后台设置）'
+        : (r.data.binanceUidEnv
+            ? '当前生效：' + r.data.binanceUidEnv + '（环境变量）'
+            : '尚未设置，USDT 付款页将提示联系店主');
+    }
+    document.getElementById('binanceUidSave').addEventListener('click', async function () {
+      var btn = this;
+      var v = document.getElementById('binanceUidInput').value.trim();
+      if (v && !/^[0-9]{5,20}$/.test(v)) {
+        Jay.toast('UID 应为 5~20 位数字', true);
+        return;
+      }
+      btn.disabled = true;
+      var r = await Jay.adminApi('/api/admin/settings', pwd, { method: 'POST', body: { binanceUid: v } });
+      btn.disabled = false;
+      if (!r.ok) {
+        Jay.toast('保存失败：' + ((r.data && r.data.error) || r.status), true);
+        return;
+      }
+      Jay.toast(v ? '币安 UID 已更新为 ' + v : '已清除，将使用环境变量的值');
+      loadBinanceUid();
+    });
+
     // 商品定价：列表 + 自定义售价
     async function loadPrices() {
       var box = document.getElementById('priceList');
@@ -447,12 +539,7 @@
       if (r.ok) {
         pwd = password;
         sessionStorage.setItem(LS_KEY, pwd);
-        loginView.style.display = 'none';
-        adminView.style.display = 'block';
-        loadOrders();
-        loadBalance();
-        loadPrices();
-        refreshQrPreview();
+        enterAdmin();
       } else {
         errEl.parentElement.classList.add('invalid');
         if (!r.networkError && r.status !== 401) {
@@ -479,17 +566,17 @@
     document.getElementById('pwd').addEventListener('input', function () {
       this.parentElement.classList.remove('invalid');
     });
-    document.getElementById('refreshBtn').addEventListener('click', loadOrders);
+    document.getElementById('refreshBtn').addEventListener('click', function () {
+      var active = document.querySelector('#adminTabs .admin-tab.active');
+      var name = active ? active.getAttribute('data-tab') : 'orders';
+      loadedTabs[name] = false; // 强制重新加载当前标签页数据
+      switchTab(name);
+    });
     document.getElementById('logoutBtn').addEventListener('click', function () { logout(); });
 
     // 已有密码缓存时尝试直接进入
     if (pwd) {
-      loginView.style.display = 'none';
-      adminView.style.display = 'block';
-      loadOrders();
-      loadBalance();
-      loadPrices();
-      refreshQrPreview();
+      enterAdmin();
     }
   })();
   </script>
