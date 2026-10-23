@@ -83,8 +83,9 @@
           🔒 = 已锁定：该价格已写入环境变量 <code>PRICE_OVERRIDES</code>，每次更新重建后自动恢复。<br>
           后台修改立即生效；想让它永久生效，点下方按钮复制配置，粘贴到 Render 环境变量 <code>PRICE_OVERRIDES</code> 并保存。
         </p>
-        <div style="margin-bottom:10px">
-          <button class="btn ghost small" id="copyPriceEnv" style="width:auto;padding:8px 16px">📋 生成环境变量配置</button>
+        <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn ghost small" id="copyPriceEnv" style="width:auto;padding:8px 16px">📋 复制价格配置</button>
+          <button class="btn ghost small" id="copyFeaturedEnv" style="width:auto;padding:8px 16px">⭐ 复制热门配置</button>
         </div>
         <div id="priceList"><p style="font-size:13px;color:var(--text-2)">定价数据加载中…</p></div>
       </div>
@@ -509,7 +510,23 @@
       }).join('');
     }
 
-    // 生成环境变量配置：把当前所有自定义价格拼成 PRICE_OVERRIDES JSON，一键复制
+    // 生成热门环境变量配置：把当前所有 ⭐ 商品的 id 拼成逗号分隔，一键复制
+    document.getElementById('copyFeaturedEnv').addEventListener('click', function () {
+      var ids = priceProducts.filter(function (p) { return p.featured; }).map(function (p) { return p.id; });
+      if (!ids.length) {
+        Jay.toast('当前没有热门商品，先点 ☆ 设为热门', true);
+        return;
+      }
+      Jay.copyText(ids.join(',')).then(function (ok) {
+        if (ok) {
+          Jay.toast('已复制 ' + ids.length + ' 个热门商品 id，去 Render 粘贴到 FEATURED_IDS');
+        } else {
+          Jay.toast('复制失败', true);
+        }
+      });
+    });
+
+    // 生成价格环境变量配置：把当前所有自定义价格拼成 PRICE_OVERRIDES JSON，一键复制
     document.getElementById('copyPriceEnv').addEventListener('click', function () {
       var obj = {};
       priceProducts.forEach(function (p) {
