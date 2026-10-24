@@ -35,6 +35,23 @@
     </div>
   </div>
 
+  <!-- 首页 Hero：左侧文案 + 右侧悬浮商品图标，点击图标直达商品详情 -->
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <p class="hero-eyebrow">DIGITAL SERVICES, MADE SIMPLE.</p>
+        <h1 class="hero-title">精选数字服务，<br><span class="hero-title-blue">即买即用。</span></h1>
+        <p class="hero-sub">热门 AI 会员、学习工具与娱乐服务，付款即发货，订单随时可查。</p>
+        <div class="hero-cta">
+          <a class="hero-btn" href="#app">探索精选服务 ↗</a>
+          <a class="hero-link" href="order.html">查询我的订单 ↗</a>
+        </div>
+        <p class="hero-foot">清晰选择 · 自助选购 · 订单可查</p>
+      </div>
+      <div class="hero-orbit" id="heroOrbit" aria-label="热门商品"></div>
+    </div>
+  </section>
+
   <main class="container" id="app">
     <!-- 分类标签 -->
     <div id="tabs" class="tabs" style="display:none" aria-label="商品分类"></div>
@@ -137,6 +154,30 @@
       state.innerHTML = html;
     }
 
+    // Hero 右侧悬浮图标：优先取热门商品，不足 4 个按顺序补齐，点击直达商品详情
+    function shortName(name) {
+      var n = (name || '').trim();
+      if (!n) return '商品';
+      var first = n.split(/[\s·\-_/|（(]/)[0] || n;
+      return first.length > 8 ? first.slice(0, 8) : first;
+    }
+    function renderHero() {
+      var orbit = document.getElementById('heroOrbit');
+      if (!orbit) return;
+      var picks = allProducts.filter(function (p) { return p.featured; }).slice(0, 4);
+      if (picks.length < 4) {
+        allProducts.forEach(function (p) {
+          if (picks.length >= 4) return;
+          if (picks.indexOf(p) === -1) picks.push(p);
+        });
+      }
+      orbit.innerHTML = picks.map(function (p, i) {
+        return '<a class="hero-icon hero-icon-' + (i + 1) + '" href="product.html?id=' + encodeURIComponent(p.id) + '" title="' + Jay.esc(p.name || '') + '">' +
+          '<span class="hero-icon-img">' + Jay.thumbHTML(p, 'hero-ph') + '</span>' +
+          '<span class="hero-icon-name">' + Jay.esc(shortName(p.name)) + '</span></a>';
+      }).join('');
+    }
+
     function render() {
       skeleton.style.display = 'none';
       state.style.display = 'none';
@@ -186,6 +227,7 @@
       }
       allProducts = products;
       renderTabs();
+      renderHero();
       render();
     }
 

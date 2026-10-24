@@ -27,7 +27,7 @@ const {
   fetchOrder: psFetchOrder,
   extractDeliveredKey,
 } = require('./lib/prodseller');
-const { notifyNewOrder, notifyPaidClaimed, notifyPaidClaimedPhoto } = require('./lib/notify');
+const { notifyNewOrder, notifyPaidClaimed, notifyPaidClaimedPhoto, sendFeishuTest } = require('./lib/notify');
 
 // ---------------- 配置 ----------------
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -57,6 +57,8 @@ const CONTACT_QQ = (process.env.CONTACT_QQ || '').trim();
 const CONTACT_TELEGRAM = (process.env.CONTACT_TELEGRAM || '').trim().replace(/^@/, '');
 // 店铺公告：前台顶部横幅展示；优先用后台设置的值，未设置过则用环境变量 ANNOUNCEMENT
 const ANNOUNCEMENT_ENV = (process.env.ANNOUNCEMENT || '').trim().slice(0, 200);
+// 飞书通知：优先用后台设置的值，未设置过则用环境变量 FEISHU_WEBHOOK
+const FEISHU_WEBHOOK_ENV = (process.env.FEISHU_WEBHOOK || '').trim();
 // 热门商品（首页"🔥热门"分类）：优先用后台设置的值，未设置过则用环境变量 FEATURED_IDS，
 // 都没有则用默认 4 款（Gemini Pro、Duolingo、Apple TV、Muse AI）。
 const FEATURED_IDS_DEFAULT =
@@ -234,6 +236,17 @@ function getBinanceUid() {
     /* 忽略，转用环境变量 */
   }
   return BINANCE_UID;
+}
+
+/** 飞书机器人 webhook：优先用后台设置的值，未设置过则用环境变量 FEISHU_WEBHOOK */
+function getFeishuWebhook() {
+  try {
+    const row = stmts.getSetting.get('feishu_webhook');
+    if (row && row.value && String(row.value).trim()) return String(row.value).trim();
+  } catch {
+    /* 忽略，转用环境变量 */
+  }
+  return FEISHU_WEBHOOK_ENV;
 }
 
 /** 读取全部自定义售价：{ productId: priceCny } */
@@ -623,7 +636,7 @@ app.post('/api/orders', ordersLimiter, async (req, res) => {
   );
 
   // Telegram 新订单通知（fire-and-forget）
-  notifyNewOrder({ productName: product.name, quantity, totalPrice, orderId, payMethod });
+  notifyNewOrder({ productName: product.name, quantity, totalPrice, orderId, payMethod, feishuWebhook: getFeishuWebhook() });
 
   res.status(201).json({ orderId, status: 'pending', totalPrice, payMethod });
 });
@@ -681,9 +694,9 @@ app.post('/api/orders/:id/mark-paid', payLimiter, withUpload(shotUpload, 'screen
   stmts.markPaid.run(note || null, shotPath, nowIso(), o.order_id);
 
   // 通知店主（文字 + 截图照片，fire-and-forget）
-  notifyPaidClaimed({ orderId: o.order_id, totalPrice: o.total_price, payNote: note, payMethod });
+  notifyPaidClaimed({ orderId: o.order_id, totalPrice: o.total_price, payNote: note, payMethod, feishuWebhook: getFeishuWebhook() });
   if (shotPath) {
-    notifyPaidClaimedPhoto({ orderId: o.order_id, totalPrice: o.total_price, screenshotPath: shotPath }).catch(() => {});
+    notifyPaidClaimedPhoto({ orderId: o.order_id, totalPrice: o.total_price, screenshotPath: shotPath, feishuWebhook: getFeishuWebhook() }).catch(() => {});
   }
 
   const updated = stmts.getOrder.get(o.order_id);
@@ -899,6 +912,7 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
   let binanceUid = '';
   let announcement = '';
   let featuredIds = [];
+  let feishuWebhook = '';
   try {
     const r1 = stmts.getSetting.get('binance_uid');
     if (r1 && r1.value) binanceUid = String(r1.value);
@@ -909,6 +923,8 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
       const arr = JSON.parse(String(r3.value));
       if (Array.isArray(arr)) featuredIds = arr.filter((s) => typeof s === 'string');
     }
+    const r4 = stmts.getSetting.get('feishu_webhook');
+    if (r4 && r4.value) feishuWebhook = String(r4.value);
   } catch {
     /* 忽略 */
   }
@@ -916,6 +932,9 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     binanceUid, binanceUidEnv: BINANCE_UID || '',
     announcement, announcementEnv: ANNOUNCEMENT_ENV,
     featuredIds,
+    feishuWebhook,
+    feishuWebhookEnvSet: Boolean(FEISHU_WEBHOOK_ENV),
+    feishuWebhookActive: Boolean(feishuWebhook || FEISHU_WEBHOOK_ENV),
   });
 });
 
@@ -963,6 +982,14 @@ app.post('/api/admin/settings', requireAdmin, (req, res) => {
     stmts.setSetting.run('announcement', ann, nowIso());
     out.announcement = ann;
   }
+  if (body.feishuWebhook !== undefined) {
+    const hook = typeof body.feishuWebhook === 'string' ? body.feishuWebhook.trim().slice(0, 500) : '';
+    if (hook && !/^https:\/\/open\.feishu\.cn\/open-apis\/bot\/v2\/hook\/[A-Za-z0-9_-]+$/.test(hook)) {
+      return res.status(400).json({ error: '飞书 webhook 地址格式不对，应以 https://open.feishu.cn/open-apis/bot/v2/hook/ 开头' });
+    }
+    stmts.setSetting.run('feishu_webhook', hook, nowIso());
+    out.feishuWebhook = hook;
+  }
   if (body.featuredIds !== undefined) {
     if (!Array.isArray(body.featuredIds)) {
       return res.status(400).json({ error: 'featuredIds 应为数组' });
@@ -974,6 +1001,17 @@ app.post('/api/admin/settings', requireAdmin, (req, res) => {
     out.featuredIds = ids;
   }
   res.json(Object.assign({ ok: true }, out));
+});
+
+// 飞书通知测试：向当前生效的 webhook 发一条测试消息，返回飞书的真实结果
+app.post('/api/admin/notify/test', requireAdmin, async (req, res) => {
+  const hook = getFeishuWebhook();
+  if (!hook) {
+    return res.status(400).json({ error: '还没设置飞书 webhook，先粘贴地址并保存' });
+  }
+  const result = await sendFeishuTest(hook);
+  if (result.ok) return res.json({ ok: true });
+  return res.status(502).json({ error: result.error || '飞书测试消息发送失败' });
 });
 
 // ---------------- 静态托管与兜底 ----------------

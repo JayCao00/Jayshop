@@ -52,6 +52,7 @@
         <button class="admin-tab" data-tab="pricing">🏷️ 定价</button>
         <button class="admin-tab" data-tab="payments">💰 收款</button>
         <button class="admin-tab" data-tab="notice">📢 公告</button>
+        <button class="admin-tab" data-tab="notify">🔔 通知</button>
       </nav>
 
       <!-- 订单 -->
@@ -147,6 +148,24 @@
         <div id="announceStatus" style="margin-top:8px;font-size:13px;color:var(--text-2)"></div>
       </div>
       </div><!-- /tab-notice -->
+      <div id="tab-notify" class="admin-panel" style="display:none">
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin:0 0 8px;font-size:15px">🔔 飞书通知</h3>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2)">
+          新订单、客户标记付款、收到付款截图时，会同步发到你的飞书群（Telegram 照常发送，多一个渠道就不怕漏看了）。
+          获取地址：飞书 App → 创建或进入一个群 → 群设置 → 机器人 → 添加"自定义机器人" → 复制 webhook 地址，粘贴到下面。
+          <span style="color:var(--warn,#b45309)">存在数据库中，服务重建后会丢失；想永久生效，在 Render 环境变量里加 FEISHU_WEBHOOK。</span>
+        </p>
+        <input id="feishuHookInput" type="text" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/……"
+          style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line,#ddd);border-radius:8px;font-size:14px">
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn small" id="feishuHookSave" style="width:auto;padding:10px 24px">保存</button>
+          <button class="btn ghost small" id="feishuHookTest" style="width:auto;padding:10px 24px">保存并发送测试消息</button>
+          <button class="btn ghost small" id="feishuHookClear" style="width:auto;padding:10px 24px">清空</button>
+        </div>
+        <div id="feishuHookStatus" style="margin-top:8px;font-size:13px;color:var(--text-2)"></div>
+      </div>
+      </div><!-- /tab-notify -->
     </div>
 
     <!-- 截图查看弹窗 -->
@@ -201,6 +220,7 @@
         else if (name === 'pricing') { loadPrices(); }
         else if (name === 'payments') { refreshQrPreview(); loadBinanceUid(); }
         else if (name === 'notice') { loadAnnouncement(); }
+        else if (name === 'notify') { loadNotifySettings(); }
       }
     }
     document.getElementById('adminTabs').addEventListener('click', function (e) {
@@ -466,6 +486,48 @@
     }
     document.getElementById('announceSave').addEventListener('click', function () { saveAnnouncement(false); });
     document.getElementById('announceClear').addEventListener('click', function () { saveAnnouncement(true); });
+
+    // 飞书通知
+    async function loadNotifySettings() {
+      var st = document.getElementById('feishuHookStatus');
+      var r = await Jay.adminApi('/api/admin/settings', pwd);
+      if (!r.ok || !r.data) {
+        st.textContent = '读取失败，请刷新重试';
+        return;
+      }
+      document.getElementById('feishuHookInput').value = r.data.feishuWebhook || '';
+      st.textContent = r.data.feishuWebhook
+        ? '当前生效：后台设置的飞书地址' + (r.data.feishuWebhookEnvSet ? '（环境变量里也有，永久生效）' : '（仅后台设置，重建后会清空）')
+        : (r.data.feishuWebhookEnvSet ? '当前生效：环境变量 FEISHU_WEBHOOK（永久生效）' : '当前未设置，新订单只发 Telegram');
+    }
+    async function saveNotifySettings(clear, testAfter) {
+      var v = clear ? '' : document.getElementById('feishuHookInput').value.trim();
+      if (testAfter && !v) {
+        Jay.toast('先粘贴飞书 webhook 地址再测试', true);
+        return;
+      }
+      var r = await Jay.adminApi('/api/admin/settings', pwd, { method: 'POST', body: { feishuWebhook: v } });
+      if (!r.ok) {
+        Jay.toast('保存失败：' + ((r.data && r.data.error) || r.status), true);
+        return;
+      }
+      if (!testAfter) {
+        Jay.toast(clear ? '飞书地址已清空' : '飞书地址已保存');
+        loadNotifySettings();
+        return;
+      }
+      var t = await Jay.adminApi('/api/admin/notify/test', pwd, { method: 'POST' });
+      if (!t.ok) {
+        Jay.toast('测试失败：' + ((t.data && t.data.error) || t.status), true);
+        loadNotifySettings();
+        return;
+      }
+      Jay.toast('测试消息已发到飞书群，去群里确认一下 ✅');
+      loadNotifySettings();
+    }
+    document.getElementById('feishuHookSave').addEventListener('click', function () { saveNotifySettings(false, false); });
+    document.getElementById('feishuHookClear').addEventListener('click', function () { saveNotifySettings(true, false); });
+    document.getElementById('feishuHookTest').addEventListener('click', function () { saveNotifySettings(false, true); });
 
     // 商品定价：列表 + 自定义售价
     var priceProducts = []; // 缓存，供"生成环境变量配置"用

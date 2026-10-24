@@ -229,7 +229,16 @@
       if (qty > maxQty) qty = maxQty;
 
       document.getElementById('dPrice').textContent = Jay.fmtMoney(p.price);
-      document.getElementById('dDelivery').textContent = p.delivery || '下单后由店主发货';
+      // 发货方式：兼容供应商返回对象形式 {type:'instant'}，避免显示 [object Object]
+      document.getElementById('dDelivery').textContent = (function (d) {
+        if (!d) return '下单后由店主发货';
+        if (typeof d === 'string') return d;
+        if (typeof d === 'object') {
+          var map = { instant: '自动发货 · 卡密/账号直发', manual: '店主手动发货' };
+          return d.label || map[d.type] || '下单后由店主发货';
+        }
+        return '下单后由店主发货';
+      })(p.delivery);
       document.getElementById('dDesc').textContent = p.description || '暂无商品描述';
 
       if (p.requiresEmailActivation) {
